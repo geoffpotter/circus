@@ -15,26 +15,36 @@ M_DIR=$(mission_dir "$MISSION_ID")
 
 STATUS_FILE=$(mission_status "$MISSION_ID")
 WORKTREE=$(jq -r '.worktree // ""' "$STATUS_FILE")
+WATCHER_WORKTREE=$(jq -r '.watcher_worktree // ""' "$STATUS_FILE")
 SESSION=$(jq -r '.tmux_session // ""' "$STATUS_FILE")
+WATCHER_SESSION=$(jq -r '.watcher_session // ""' "$STATUS_FILE")
 REPO=$(jq -r '.repo // ""' "$STATUS_FILE")
+REPO_PATH=$(repo_field "$REPO" '.path' 2>/dev/null || echo "")
 
-# Kill tmux session if alive
-if [[ -n "$SESSION" ]] && tmux_session_exists "$SESSION"; then
-  log "killing tmux session $SESSION"
-  tmux kill-session -t "$SESSION"
-fi
-
-# Remove worktree if present
-if [[ -n "$WORKTREE" && -d "$WORKTREE" ]]; then
-  REPO_PATH=$(repo_field "$REPO" '.path')
-  if [[ -n "$REPO_PATH" && -d "$REPO_PATH" ]]; then
-    log "removing worktree $WORKTREE"
-    git -C "$REPO_PATH" worktree remove --force "$WORKTREE" 2>&1 || \
-      { log "git worktree remove failed; falling back to rm -rf"; rm -rf "$WORKTREE"; }
-  else
-    rm -rf "$WORKTREE"
+kill_session() {
+  local s="$1"
+  if [[ -n "$s" ]] && tmux_session_exists "$s"; then
+    log "killing tmux session $s"
+    tmux kill-session -t "$s"
   fi
-fi
+}
+
+remove_worktree() {
+  local wt="$1"
+  [[ -n "$wt" && -d "$wt" ]] || return 0
+  if [[ -n "$REPO_PATH" && -d "$REPO_PATH" ]]; then
+    log "removing worktree $wt"
+    git -C "$REPO_PATH" worktree remove --force "$wt" 2>&1 || \
+      { log "git worktree remove failed; falling back to rm -rf"; rm -rf "$wt"; }
+  else
+    rm -rf "$wt"
+  fi
+}
+
+kill_session "$SESSION"
+kill_session "$WATCHER_SESSION"
+remove_worktree "$WORKTREE"
+remove_worktree "$WATCHER_WORKTREE"
 
 # Mark closed and archive
 status_set "$MISSION_ID" "state" "closed"

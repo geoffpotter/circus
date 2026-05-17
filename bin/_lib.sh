@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # Shared helpers for circus bin/ scripts. Source this; don't run it.
+#
+# This file is meant to be sourced by bash scripts in bin/. It deliberately
+# does NOT call `set -e`, etc. — caller scripts set their own modes. That
+# also means the file can be sourced from a zsh shell (e.g. inside a Claude
+# session) without nuking the user's shell options.
 
-set -euo pipefail
-
-CIRCUS_ROOT="${CIRCUS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Resolve our own location (works when sourced from bash). Fall back to
+# CIRCUS_ROOT env or a hard-coded sensible path.
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  _CIRCUS_LIB_PATH="${BASH_SOURCE[0]}"
+fi
+CIRCUS_ROOT="${CIRCUS_ROOT:-$(cd "$(dirname "${_CIRCUS_LIB_PATH:-$0}")/.." 2>/dev/null && pwd || echo "$HOME/code/circus")}"
 CIRCUS_STATE="${CIRCUS_STATE:-$HOME/.circus}"
 CIRCUS_MISSIONS_DIR="$CIRCUS_STATE/missions"
 CIRCUS_DONE_DIR="$CIRCUS_STATE/missions/done"
@@ -113,17 +121,13 @@ status_init() {
 
 # Inbox rebuild: scan all active missions, write a flat summary.
 rebuild_inbox() {
-  local entries='[]'
-  shopt -s nullglob
-  for d in "$CIRCUS_MISSIONS_DIR"/*/; do
-    [[ "$d" == "$CIRCUS_DONE_DIR/" ]] && continue
-    [[ "$(basename "$d")" == "done" ]] && continue
-    local f="$d/status.json"
+  local entries='[]' f
+  # `find` is portable (vs bash-only shopt nullglob); -maxdepth keeps it shallow.
+  while IFS= read -r f; do
     [[ -f "$f" ]] || continue
     entries=$(jq --slurpfile cur "$f" '. + [$cur[0]]' <<<"$entries")
-  done
-  shopt -u nullglob
-  jq -n --argjson missions "$entries" '{missions: $missions, updated_at: "'"$(now_iso)"'"}' > "$CIRCUS_INBOX"
+  done < <(find "$CIRCUS_MISSIONS_DIR" -maxdepth 2 -type f -name status.json -not -path "$CIRCUS_DONE_DIR/*" 2>/dev/null)
+  jq -n --argjson missions "$entries" --arg now "$(now_iso)" '{missions: $missions, updated_at: $now}' > "$CIRCUS_INBOX"
 }
 
 # Tmux helpers --------------------------------------------------------------

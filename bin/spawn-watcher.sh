@@ -92,21 +92,25 @@ Your job:
 1. Read the brief.
 2. Read the diff: gh pr diff $PR_NUMBER
 3. Inspect any files you want, in this worktree.
-4. Decide: approve, request changes, or comment.
-5. Post your review with gh:
-     gh pr review $PR_NUMBER --approve --body "..."
-     gh pr review $PR_NUMBER --request-changes --body "..."
-     gh pr review $PR_NUMBER --comment --body "..."
-6. When your review is posted, run:
-     $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID
-   That inspects the PR state, auto-merges on approval (squash), or marks
-   the mission as needing revisions and pings the handler.
+4. Optionally post a public comment on the PR for context:
+     gh pr review $PR_NUMBER --comment --body "<short review>"
+   (Don't try to use --approve: GitHub forbids approving your own PRs and
+   the legman ran under the same account. We approve internally instead.)
+5. Decide your verdict and finalize. ONE of:
+     $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID approve [--notes "..."]
+     $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID changes  --notes "..."
+   On 'approve', the PR is squash-merged and the handler is pinged.
+   On 'changes', the mission moves to 'revisions' and the handler relays
+   notes back to the legman. Always pass --notes on changes; on approve
+   it's optional but a one-line summary helps the audit log.
 
 Review standards:
 - The brief is the source of truth for scope. Don't request changes beyond the brief.
 - Look for: correctness, tests if applicable, obvious bugs, security issues,
   scope creep, broken style consistency.
 - Be concise. Reviewers who write paragraphs don't get read.
+
+After running watcher-done.sh, your job is done. You can stop.
 PROMPT
 
 LAUNCH_FILE="$M_DIR/watcher-launch.sh"
