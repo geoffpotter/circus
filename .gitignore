@@ -4,3 +4,17 @@ node_modules/
 
 # Local Claude state for the handler session
 .claude/
+
+# Mission state lives in-tree for greppability but isn't tracked
+missions/
+worktrees/
+inbox.json
+inbox.jsonl
+
+# Registered repos & their wikis live in-tree (each their own git repo)
+repos/
+wikis/
+wiki/
+
+# Old state location, in case migration leaves something behind
+.circus/

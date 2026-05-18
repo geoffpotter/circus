@@ -46,8 +46,11 @@ kill_session "$WATCHER_SESSION"
 remove_worktree "$WORKTREE"
 remove_worktree "$WATCHER_WORKTREE"
 
-# Mark closed and archive
-status_set "$MISSION_ID" "state" "closed"
+# Mark closed + close the mirrored GH issue (if any). The PR's `Closes #N`
+# usually does this on merge, but call again for missions that didn't merge
+# (revisions abandoned, or contributor missions that never went upstream).
+status_set_state "$MISSION_ID" "closed"
+status_close_issue "$MISSION_ID" "Mission closed via close-mission.sh"
 mkdir -p "$CIRCUS_DONE_DIR"
 mv "$M_DIR" "$CIRCUS_DONE_DIR/$MISSION_ID"
 rebuild_inbox

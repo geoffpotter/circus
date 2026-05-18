@@ -36,15 +36,16 @@ done
 repo_exists "$REPO" || die "repo not found in repos.yml: $REPO"
 [[ -f "$BRIEF_SRC" ]] || die "brief not found: $BRIEF_SRC"
 
-REPO_PATH=$(repo_field "$REPO" '.path')
-WORKTREE_ROOT=$(repo_field "$REPO" '.worktree_root')
+REPO_PATH=$(repo_path "$REPO")
+WORKTREE_ROOT=$(repo_worktree_root "$REPO")
 CATEGORY=$(repo_field "$REPO" '.category')
 DEFAULT_BRANCH=$(repo_field "$REPO" '.default_branch')
 [[ -n "$DEFAULT_BRANCH" ]] || DEFAULT_BRANCH="main"
+ISSUES_MODE=$(repo_field "$REPO" '.issues_mode')
+[[ -n "$ISSUES_MODE" ]] || ISSUES_MODE="local"
 
 [[ "$CATEGORY" == "reference" ]] && die "cannot spawn a legman on a reference repo: $REPO"
 [[ -d "$REPO_PATH" ]] || die "repo path missing on disk: $REPO_PATH"
-[[ -n "$WORKTREE_ROOT" ]] || die "worktree_root not set in repos.yml for: $REPO"
 
 # Generate mission id from brief's first heading or first line.
 BRIEF_TITLE=$(head -n 1 "$BRIEF_SRC" | sed -E 's/^#+ *//')
@@ -95,6 +96,22 @@ cat > "$WORKTREE/.claude/settings.local.json" <<JSON
 }
 JSON
 
+# Mirror as a GitHub issue if the repo is configured for it.
+ISSUE_URL=""
+ISSUE_NUMBER=""
+ISSUE_NWO=""
+if [[ "$ISSUES_MODE" == "mirror" ]]; then
+  ISSUE_NWO=$(repo_nwo "$REPO")
+  if [[ -z "$ISSUE_NWO" ]]; then
+    log "WARNING: issues_mode=mirror but could not resolve nwo for $REPO — skipping issue creation"
+  else
+    log "creating mirror issue on $ISSUE_NWO"
+    ISSUE_URL=$(circus_issue_create "$ISSUE_NWO" "$BRIEF_TITLE" "$M_DIR/brief.md" | tail -1)
+    ISSUE_NUMBER=$(printf '%s' "$ISSUE_URL" | sed -E 's|.*/issues/([0-9]+).*|\1|')
+    log "issue: $ISSUE_URL"
+  fi
+fi
+
 # Initial status.json
 STATUS_BLOB=$(jq -n \
   --arg repo "$REPO" \
@@ -105,10 +122,21 @@ STATUS_BLOB=$(jq -n \
   --arg category "$CATEGORY" \
   --arg state "dispatched" \
   --arg worker_type "legman" \
+  --arg issue_url "$ISSUE_URL" \
+  --arg issue_nwo "$ISSUE_NWO" \
+  --arg issue_number "$ISSUE_NUMBER" \
   '{repo: $repo, branch: $branch, worktree: $worktree, tmux_session: $session,
     model: $model, category: $category, state: $state, worker_type: $worker_type,
-    pr_number: null, pr_url: null, summary: null}')
+    pr_number: null, pr_url: null, summary: null,
+    issue_url: (if $issue_url == "" then null else $issue_url end),
+    issue_nwo: (if $issue_nwo == "" then null else $issue_nwo end),
+    issue_number: (if $issue_number == "" then null else ($issue_number | tonumber) end)}')
 status_init "$MISSION_ID" "$STATUS_BLOB"
+
+# Stamp the initial state on the issue's label set (if we mirrored).
+if [[ -n "$ISSUE_NUMBER" && -n "$ISSUE_NWO" ]]; then
+  circus_issue_relabel "$ISSUE_NWO" "$ISSUE_NUMBER" "dispatched"
+fi
 
 # Bootstrap prompt for the worker
 SESSION=$(legman_session "$MISSION_ID")

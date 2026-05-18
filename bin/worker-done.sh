@@ -43,10 +43,16 @@ fi
 log "pushing $BRANCH to origin"
 git push -u origin "$BRANCH"
 
-# PR title & body from brief
+# PR title & body from brief. If the mission has a mirrored issue, include
+# `Closes #N` so the merge auto-closes the issue.
 TITLE=$(head -n 1 "$BRIEF_PATH" | sed -E 's/^#+ *//')
 [[ -n "$TITLE" ]] || TITLE="circus: $MISSION_ID"
-BODY=$({ cat "$BRIEF_PATH"; printf '\n---\ncircus mission: %s\n' "$MISSION_ID"; })
+ISSUE_NUMBER=$(jq -r '.issue_number // ""' "$STATUS_FILE")
+BODY=$({
+  cat "$BRIEF_PATH"
+  printf '\n---\ncircus mission: %s\n' "$MISSION_ID"
+  [[ -n "$ISSUE_NUMBER" && "$ISSUE_NUMBER" != "null" ]] && printf 'Closes #%s\n' "$ISSUE_NUMBER"
+})
 
 # Open the PR — base is the repo's default branch (which for a fork is the
 # fork's default, exactly what we want for contributor repos). If a PR for
@@ -64,12 +70,10 @@ fi
 
 status_set_raw "$MISSION_ID" "pr_number" "${PR_NUMBER:-null}"
 status_set "$MISSION_ID" "pr_url" "$PR_URL"
-status_set "$MISSION_ID" "state" "awaiting_review"
+status_set_state "$MISSION_ID" "awaiting_review"
 
-# Ping handler if its tmux session is up
-if tmux_session_exists "$(handler_session)"; then
-  tmux_send "$(handler_session)" "[legman-$MISSION_ID] PR ready for review: $PR_URL"
-fi
+# Notify handler via inbox + notification (never via send-keys).
+notify_handler "$MISSION_ID" "pr-ready" "PR ready for review: $PR_URL"
 
 cat <<EOF
 mission:  $MISSION_ID

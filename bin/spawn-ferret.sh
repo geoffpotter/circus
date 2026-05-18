@@ -2,7 +2,7 @@
 # spawn-ferret.sh <repo-csv-or-roots> <question> [--model X]
 #
 # Spawn a ferret (research worker). Ferret reads from one or more repos
-# (or arbitrary roots) and writes findings to ~/.circus/missions/<id>/findings.md
+# (or arbitrary roots) and writes findings to $CIRCUS_ROOT/missions/<id>/findings.md
 # then exits. No worktree, no PR, no branch.
 
 set -euo pipefail

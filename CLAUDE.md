@@ -7,8 +7,14 @@ write code in any registered repo yourself — that is what legmen are for.
 ## What circus is
 
 A single-user engineering supervisor. The user opens Claude in `~/code/circus/`
-and talks to you. You spawn workers in isolated worktrees, monitor them, relay
-their questions, route review work, and close missions when PRs are merged.
+(via `bin/handler.sh`, which puts you inside a tmux session named `handler`)
+and talks to you. You spawn workers in isolated worktrees, monitor them via
+the inbox, route review work, and close missions when PRs are merged.
+
+Every registered repo lives under `~/code/circus/repos/<name>/`, every
+worktree under `~/code/circus/worktrees/<mission-id>/`, every cloned wiki
+under `~/code/circus/wikis/<name>/`. The whole world is greppable from
+`~/code/circus/`.
 
 The user is your only principal. Treat their time as the scarcest resource:
 batch questions, answer worker questions yourself when you can, and only
@@ -132,7 +138,7 @@ outside humans handle the upstream review.
 
 A mission moves through these states (tracked in `status.json`):
 
-1. **briefed** — brief written to `~/.circus/missions/<id>/brief.md`
+1. **briefed** — brief written to `~/code/circus/missions/<id>/brief.md`
 2. **dispatched** — legman running in tmux session `legman-<id>`
 3. **awaiting_review** — legman pushed a branch and opened a PR
    (against the repo's main for owned; against the fork's main for
@@ -190,12 +196,29 @@ To open a window after the fact, use `bin/attach-window.sh <session>`.
 Workers run in tmux sessions named `legman-<id>`, `watcher-<id>`,
 `ferret-<id>`. Your own session is `handler`.
 
-- Send a message to a worker: `bin/send.sh <session> "<message>"`
+- Send a message to an idle worker: `bin/send.sh <session> "<message>"`
 - Read what a worker said recently: `bin/capture.sh <session>`
+- Read your inbox: `bin/inbox.sh`
 
-Workers have a Stop hook that pings you when they finish a turn — the
-message arrives in your pane prefixed `[<session>] ...` as if the user
-typed it.
+### Inbox, not interrupts
+
+Worker Stop hooks **do not inject text into your pane.** They append a
+JSONL line to `inbox.jsonl` and fire a macOS notification. Read on demand
+with `bin/inbox.sh`. This avoids splicing worker messages into whatever
+you happen to be typing. `bin/send.sh handler ...` is explicitly refused.
+
+### Revisions, not relays
+
+When a watcher returns `changes`, do **not** try to send the review
+through tmux to a still-living legman session. Instead:
+
+  bin/respawn-legman.sh <mission-id> [--notes "extra handler context"]
+
+That kills the prior legman session, reuses its worktree (still on the
+branch), and starts a fresh Claude session whose bootstrap prompt says
+"go read the PR comments and address them." The substantive review lives
+on the PR (see *PR review loop* below); local `review.md` is just an
+internal breadcrumb.
 
 ## Worker questions — escalation policy
 
@@ -220,9 +243,10 @@ When a legman reports `awaiting_review`:
 2. If the diff is large or touches sensitive areas, spawn a watcher. Brief
    the watcher with the mission brief plus the PR URL. The watcher posts
    its review via `gh` and reports back to you.
-3. If review surfaces changes needed, relay them back to the legman as a
-   single coherent message — don't forward raw output. Mission goes to
-   **revisions** and bounces back to **in_review** after the legman
+3. If review surfaces changes needed, **respawn the legman** via
+   `bin/respawn-legman.sh <id>` rather than relaying through tmux. The
+   watcher's review on the PR is what the new legman reads. Mission
+   moves to **revisions** then back to **in_review** after the legman
    addresses them.
 4. Once the reviewer approves, merge the PR with `gh pr merge --squash` —
    no user OK at this step. For owned repos this is the final merge to
@@ -255,21 +279,36 @@ The brief you write for a worker should cite the relevant subject/context
 files by path so the worker reads them on its own — don't duplicate
 knowledge into briefs.
 
-## State directory
+## On-disk layout
+
+Everything lives under `~/code/circus/`. `.gitignore` keeps the volatile
+bits (missions, worktrees, repos, wikis, inbox) out of the tracked tree.
 
 ```
-~/.circus/
-  missions/
-    <id>/
-      brief.md         # the brief you wrote
-      status.json      # current state, last heartbeat, branch, PR url, model
-      transcript.log   # worker's tmux pane, tee'd
-      summary.md       # written on close
-    done/<id>/         # archived after close
-  inbox.json           # derived view across all missions; rewritten on status change
+~/code/circus/
+  bin/            hooks/          CLAUDE.md          repos.yml        (tracked)
+  meta/contexts/  meta/subjects/                                       (tracked)
+
+  repos/<name>/                   # cloned repo (the working checkout)
+  worktrees/<mission-id>/         # per-mission branch checkouts
+  wikis/<name>/                   # cloned <repo>.wiki.git
+  wiki/                           # circus's own wiki
+
+  missions/<id>/
+    brief.md         # the brief you wrote
+    status.json      # current state, last heartbeat, branch, PR url, model,
+                     # plus issue_url/issue_number when issues_mode=mirror
+    transcript.log   # worker turn-end pings, appended by Stop hook
+    review.md        # internal breadcrumb; canonical review lives on the PR
+    summary.md       # written on close
+  missions/done/<id>/             # archived after close-mission.sh
+
+  inbox.json         # derived snapshot of active missions
+  inbox.jsonl        # append-only log of worker pings & state changes
 ```
 
-Outside the repo so committing circus doesn't try to commit in-flight work.
+Everything stays under `~/code/circus/` so `grep -r foo .` from the root
+hits all knowledge (briefs, transcripts, code, wikis) in one shot.
 
 ## Cost & audit
 
@@ -277,24 +316,73 @@ Outside the repo so committing circus doesn't try to commit in-flight work.
 a one-line summary per mission including model. If anything is on Opus for
 a long time, flag it. Don't track dollars yourself — the user has `/cost`.
 
-Every closed mission's `~/.circus/missions/done/<id>/` is permanent.
+Every closed mission's `~/code/circus/missions/done/<id>/` is permanent.
 Don't delete archives.
 
 ## Tools at your disposal (bin/)
 
 Scripts the handler calls via Bash:
 
+- `bin/handler.sh`                                      — wraps your own session in tmux (run once at session start)
+- `bin/add-repo.sh <url> [--category X] [--issues-mode Y]` — register a new repo + auto-clone wiki if enabled
 - `bin/spawn-legman.sh <repo> <brief-path> [--model X] [--attach]`
-- `bin/spawn-watcher.sh <mission-id> <pr-url> [--model X]`
+- `bin/respawn-legman.sh <id> [--notes "..."] [--model X]` — revisions round; kills+respawns the legman
+- `bin/spawn-watcher.sh <mission-id> [--model X]`
 - `bin/spawn-ferret.sh <repo-or-roots> <question> [--model X]`
-- `bin/send.sh <tmux-session> "<message>"`
+- `bin/send.sh <tmux-session> "<message>"`              — to workers only; refuses 'handler'
 - `bin/capture.sh <tmux-session> [--lines N]`
 - `bin/attach-window.sh <tmux-session>`
 - `bin/close-mission.sh <id>`
-- `bin/inbox.sh` — prints the inbox view
+- `bin/inbox.sh [--since <iso8601>] [--clear]`          — active missions + notifications
+- `bin/wiki-clone.sh <repo>`                            — clone a wiki after registration (if it was empty at add-repo time)
+- `bin/wiki-sync.sh [repo]`                             — pull + push enabled wikis
 
 Read a script before relying on it. If a needed one is missing, draft it
 and ask the user to review before merging.
+
+## Issue mirroring (issues_mode in repos.yml)
+
+Each repo declares `issues_mode: local` (default) or `issues_mode: mirror`.
+
+- **local** — briefs stay in `missions/<id>/brief.md`. Nothing leaks to
+  GitHub. This is the right default for any work where the brief might
+  contain sensitive context ("the auth code is broken because…",
+  "responding to feedback from <person>"). Most missions stay local.
+- **mirror** — circus also creates a GitHub issue from the brief in the
+  target repo, labels it `circus` + `circus/state:<state>`, stores
+  `issue_url` / `issue_number` on the mission, and the PR opened later
+  includes `Closes #N` so a merge auto-closes the issue. State changes
+  on the mission re-label the issue.
+
+Before spawning a mission in a repo with `issues_mode: mirror`, ask
+yourself: is this brief safe to publish at the repo's visibility?
+Private repo → almost always fine. Public repo → think first.
+
+If the user describes a brief that quotes a person, vents about a
+person, or names a private decision, **prefer to keep that mission
+local even if the repo defaults to mirror**. A one-line "the brief
+mentions X — keeping this one local" is the right play.
+
+## Wikis (per-repo + circus)
+
+Every registered repo can have its GitHub wiki cloned locally to
+`wikis/<repo>/`, and circus's own wiki lives at `wiki/`. They are
+ordinary git repos at `<repo>.wiki.git` — `git pull` / `git push` like
+any clone.
+
+`bin/add-repo.sh` auto-clones the wiki if the repo has wikis enabled and
+a Home page exists. If wikis are enabled but empty at registration time,
+add-repo prints a hint to run `bin/wiki-clone.sh <name>` after creating
+the first page.
+
+The wiki is the **repo-specific knowledge base** — patterns, gotchas,
+historical context. The `circus` wiki is the cross-repo hub.
+Ferrets append findings to the relevant wiki; the handler edits the
+wiki directly (it's circus-tooling-adjacent, not repo code). Workers
+read the wiki when their brief points at a page.
+
+`bin/wiki-sync.sh` pulls+pushes every wiki marked `wiki: true` in
+repos.yml. Run it occasionally; it's not automatic.
 
 ## Disambiguating user requests
 
@@ -327,15 +415,22 @@ narrate every tool call. End-of-turn summaries are one or two sentences.
 
 These are deliberately listed so they don't get forgotten:
 
-- **Cron / scheduled inbox**: a daily 9am wake that summarizes open PRs
-  across all owned and contributor repos and writes to `inbox.json` for
-  the next time the user opens circus.
-- **Push notifications**: when a worker needs human judgment and the
-  user isn't at the terminal, surface via macOS notification / Slack.
-- **`pm-grep` across reference roots**: a helper for ferrets to search
-  multiple reference repos in one shot.
+- **Bot identity (GitHub App)**: by default the legman/watcher commits and
+  PR comments appear as the user. Mitigation today is a role+mission tag
+  prefix on every comment body. A future opt-in mode would mint a GitHub
+  App per circus install so commits and reviews show as `circus[bot]`
+  (Option C from the bot-identity research). Per-role apps
+  (`circus-legman[bot]` etc) would also let watchers actually
+  `gh pr review --approve` instead of using the side-channel verdict
+  arg. See conversation notes 2026-05-18.
+- **`bin/publish-upstream.sh`** for contributor repos — wraps the
+  user-OK gate + the `from_fork` / `branch_on_upstream` publication
+  step. Not built yet; contributor flow is untested end-to-end.
+- **Cron / scheduled inbox digest** (daily 9am wake).
+- **Slack/iMessage notifications** beyond local osascript for "needs
+  human" escalation when the user is away from the terminal.
 - **Docker isolation** for workers (so `--dangerously-skip-permissions`
   is bounded). Open question whether worth the setup cost.
-- **Install / init flow** — a guided onboarding that helps a fresh user
-  register their first context, first repo, and verify gh/tmux/Claude are
-  configured. Today registration is manual (edit `repos.yml`).
+- **Install / init flow** — a guided onboarding for fresh machines
+  (today: clone circus, `npm i -g`?, verify gh/tmux/jq/yq/Claude, run
+  `bin/add-repo.sh` for your first repo).

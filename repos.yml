@@ -3,57 +3,61 @@
 # Each entry is a repo the handler knows about. The handler reads this
 # before any repo-touching operation. See CLAUDE.md for what each field
 # means and how categories drive workflow.
-
-repos:
-  # ----------------------------------------------------------------------
-  # The testbed: small Node project with intentional bugs/gaps. First
-  # mission target. Owned.
-  - name: testbed
-    category: owned
-    path: /Users/geoffpotter/code/circus-testbed
-    worktree_root: /Users/geoffpotter/code/circus-testbed-worktrees
-    default_branch: main
-    identity:
-      name: Geoff Potter
-      email: geoffpot@gmail.com
-
-# Schema reference (uncomment & adapt as you add real repos) ---------------
 #
-# A real contributor repo using the fork pattern:
+# Defaults (set per-entry to override):
+#   path:           $CIRCUS_ROOT/repos/<name>
+#   worktree_root:  $CIRCUS_ROOT/worktrees  (shared)
+#   default_branch: main
+#   issues_mode:    local                   (don't create GH issues)
+#   wiki:           false                   (don't sync wiki)
+#   nwo:            inferred from origin remote
 #
-#  - name: someones-open-source-lib
-#    category: contributor
-#    path: /Users/geoffpotter/code/someones-open-source-lib   # clone of YOUR fork
-#    worktree_root: /Users/geoffpotter/code/someones-open-source-lib-worktrees
-#    default_branch: main
-#    upstream_pr: from_fork
-#    upstream_remote_url: https://github.com/original-org/original-repo.git
-#    identity:
-#      name: Geoff Potter
-#      email: geoffpot@gmail.com
+# Registration is normally done via bin/add-repo.sh <url>, not by hand.
+# `repos:` is kept LAST in this file so add-repo.sh can append safely.
 #
-# A contributor repo using the branch-on-upstream pattern (you have
-# branch-push access on upstream, no merge rights):
+# Schema reference --------------------------------------------------------
 #
-#  - name: work-monorepo
-#    category: contributor
-#    path: /Users/work/code/work-monorepo   # clone of YOUR fork (still)
-#    worktree_root: /Users/work/code/work-monorepo-worktrees
-#    default_branch: main
-#    upstream_pr: branch_on_upstream
-#    upstream_remote_url: git@github.com:our-org/work-monorepo.git
-#    identity:
-#      name: Geoff Potter
-#      email: geoffpot@work-domain.com
+#   # Contributor repo using the fork pattern:
+#   - name: someones-open-source-lib
+#     category: contributor
+#     nwo: original-org/original-repo
+#     default_branch: main
+#     issues_mode: local
+#     wiki: false
+#     upstream_pr: from_fork
+#     upstream_remote_url: https://github.com/original-org/original-repo.git
+#     identity:
+#       name: Geoff Potter
+#       email: geoffpot@gmail.com
 #
-# A reference repo (read-only for ferrets only):
+#   # Contributor repo with branch-push access to upstream:
+#   - name: work-monorepo
+#     category: contributor
+#     nwo: our-org/work-monorepo
+#     default_branch: main
+#     upstream_pr: branch_on_upstream
+#     upstream_remote_url: git@github.com:our-org/work-monorepo.git
+#     identity:
+#       name: Geoff Potter
+#       email: geoffpot@work-domain.com
 #
-#  - name: screeps-engine
-#    category: reference
-#    path: /Users/geoffpotter/code/screeps-engine
+#   # Reference repo (read-only, ferrets only):
+#   - name: screeps-engine
+#     category: reference
 
 contexts:
   # Free-form groupings used by meta/contexts/<name>.md. The handler reads
   # the matching context md when a mission targets a repo in the context.
   - name: personal
-    repos: [testbed]
+    repos: [circus-testbed]
+
+repos:
+  - name: circus-testbed
+    category: owned
+    nwo: geoffpotter/circus-testbed
+    default_branch: main
+    issues_mode: mirror
+    wiki: false
+    identity:
+      name: Geoff Potter
+      email: geoffpot@gmail.com

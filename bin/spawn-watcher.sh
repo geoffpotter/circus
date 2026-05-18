@@ -92,17 +92,24 @@ Your job:
 1. Read the brief.
 2. Read the diff: gh pr diff $PR_NUMBER
 3. Inspect any files you want, in this worktree.
-4. Optionally post a public comment on the PR for context:
-     gh pr review $PR_NUMBER --comment --body "<short review>"
-   (Don't try to use --approve: GitHub forbids approving your own PRs and
-   the legman ran under the same account. We approve internally instead.)
+4. Post your review on the PR — this is the **canonical** record of the
+   review. Future legmen (on revisions) read from here, not from a local
+   file:
+     gh pr review $PR_NUMBER --comment --body "<your review>"
+   The body should be a tight markdown review: a verdict line, then
+   specific concerns with file:line references where applicable. Inline
+   per-line comments are fine too if you want to call out specific
+   lines; use gh's --comment plus inline pending review flow if you do.
+   (Don't try to use --approve: GitHub forbids approving your own PRs
+   and the legman ran under the same account. We approve internally.)
 5. Decide your verdict and finalize. ONE of:
      $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID approve [--notes "..."]
-     $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID changes  --notes "..."
+     $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID changes  [--notes "..."]
    On 'approve', the PR is squash-merged and the handler is pinged.
-   On 'changes', the mission moves to 'revisions' and the handler relays
-   notes back to the legman. Always pass --notes on changes; on approve
-   it's optional but a one-line summary helps the audit log.
+   On 'changes', the mission moves to 'revisions'; a fresh legman is
+   respawned by the handler, reads your PR review via gh, and addresses
+   it. --notes here is just an internal audit string for the handler;
+   the substantive review lives on the PR.
 
 Review standards:
 - The brief is the source of truth for scope. Don't request changes beyond the brief.

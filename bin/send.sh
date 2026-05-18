@@ -14,7 +14,10 @@ source "$HERE/_lib.sh"
 TARGET="$1"; shift
 MSG="$*"
 
-if [[ "$TARGET" != legman-* && "$TARGET" != watcher-* && "$TARGET" != ferret-* && "$TARGET" != handler ]]; then
+if [[ "$TARGET" == handler || "$TARGET" == handler-* ]]; then
+  die "refusing to send-keys to handler — the handler reads inbox.jsonl on demand"
+fi
+if [[ "$TARGET" != legman-* && "$TARGET" != watcher-* && "$TARGET" != ferret-* ]]; then
   TARGET="legman-$TARGET"
 fi
 

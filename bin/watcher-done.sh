@@ -55,20 +55,22 @@ cd "$CD_DIR"
 # Determine OWNER/REPO for gh --repo, belt-and-suspenders against detached state.
 REPO_NWO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
 
-# Save review notes to the mission dir for audit
+# Cache the verdict + internal notes locally for audit. The substantive
+# review lives on the PR itself (gh pr review --comment) — this file is a
+# breadcrumb, not the source of truth.
 REVIEW_FILE="$(mission_dir "$MISSION_ID")/review.md"
 {
-  echo "# Watcher review: $VERDICT"
+  echo "# Watcher verdict: $VERDICT"
   echo
-  echo "PR: $PR_URL"
+  echo "PR (canonical review): $PR_URL"
   echo "Time: $(now_iso)"
   echo
   if [[ -n "$NOTES" ]]; then
-    echo "## Notes"
+    echo "## Internal notes"
     echo
     printf '%s\n' "$NOTES"
   else
-    echo "_no notes_"
+    echo "_no internal notes — see PR comments for the actual review_"
   fi
 } > "$REVIEW_FILE"
 
@@ -85,22 +87,20 @@ case "$VERDICT" in
       log "PR was already merged; continuing"
     fi
     if [[ "$CATEGORY" == "contributor" ]]; then
-      status_set "$MISSION_ID" "state" "awaiting_upstream_approval"
+      status_set_state "$MISSION_ID" "awaiting_upstream_approval"
       OUTCOME="approved & merged into fork main — needs user OK to publish upstream"
     else
-      status_set "$MISSION_ID" "state" "merged"
+      status_set_state "$MISSION_ID" "merged"
       OUTCOME="approved & merged"
     fi
     ;;
   changes)
-    status_set "$MISSION_ID" "state" "revisions"
-    OUTCOME="changes requested — see $REVIEW_FILE"
+    status_set_state "$MISSION_ID" "revisions"
+    OUTCOME="changes requested — handler should respawn legman: bin/respawn-legman.sh $MISSION_ID"
     ;;
 esac
 
-# Ping handler
-if tmux_session_exists "$(handler_session)"; then
-  tmux_send "$(handler_session)" "[watcher-$MISSION_ID] $OUTCOME  ($PR_URL)"
-fi
+KIND="review-${VERDICT}"
+notify_handler "$MISSION_ID" "$KIND" "$OUTCOME  ($PR_URL)"
 
 echo "$OUTCOME"

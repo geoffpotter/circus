@@ -55,12 +55,9 @@ SESSION_NAME="${WORKER_TYPE}-${MISSION_ID}"
   printf '%s\n' "${LAST_TEXT:-(no text)}"
 } >> "$(mission_transcript "$MISSION_ID")"
 
-# Ping handler if alive
-if tmux_session_exists "$(handler_session)"; then
-  MSG="[$SESSION_NAME] ${LAST_TEXT:-(turn ended, no text)}"
-  # Keep ping concise
-  MSG=$(printf '%s' "$MSG" | head -c 800)
-  tmux_send "$(handler_session)" "$MSG" || true
-fi
+# Notify handler via inbox + (best-effort) macOS notification. Never inject
+# text into the handler's tmux pane — that splices into whatever the user
+# is typing.
+notify_handler "$MISSION_ID" "turn-end" "[$SESSION_NAME] ${LAST_TEXT:-(turn ended, no text)}"
 
 exit 0

@@ -15,24 +15,41 @@ beyond is in the *Planned* section at the bottom of `CLAUDE.md`.
 
 ## Quickstart (for the user)
 
-1. Open Claude in `~/code/circus/`. The handler's playbook loads automatically.
-2. Talk to the handler in plain English. Examples:
+1. Run `bin/handler.sh`. That opens Claude inside a tmux session named
+   `handler`, with `~/code/circus/` as the cwd. The playbook (`CLAUDE.md`)
+   auto-loads.
+2. Register your first repo: `bin/add-repo.sh <github-url>` (or tell the
+   handler to do it).
+3. Talk to the handler in plain English. Examples:
    - *"send a legman to circus-testbed to fix the bug in `reverse` when input is empty"*
    - *"what's pending?"*
-   - *"the watcher on mission 20260517-1430-bug-fix came back with notes — send them to the legman"*
+   - *"the watcher on mission ... came back with changes — respawn the legman"*
 
 You never need to call the CLI directly; the handler invokes `bin/` scripts on
 your behalf.
 
 ## Layout
 
+Everything (including registered repos and their wikis) lives under
+`~/code/circus/` so a single `grep -r` finds it all. Repo clones,
+worktrees, missions, and wikis are gitignored — the tracked tree only
+holds the tooling.
+
 ```
-bin/         # scripts the handler calls via Bash
-hooks/       # Stop hook + settings template that get copied into worker worktrees
-meta/        # hierarchical knowledge files (contexts, subjects)
-CLAUDE.md    # handler playbook (auto-loaded by Claude in this dir)
-repos.yml    # catalog of registered repos
-~/.circus/   # state directory (missions, inbox) — outside the repo
+bin/                 scripts the handler calls via Bash
+hooks/               Stop hook for workers
+meta/                hierarchical knowledge files (contexts, subjects)
+CLAUDE.md            handler playbook (auto-loaded by Claude in this dir)
+repos.yml            catalog of registered repos
+
+repos/<name>/        cloned working checkout of each registered repo
+worktrees/<id>/      per-mission branch checkouts
+wikis/<name>/        cloned <repo>.wiki.git
+wiki/                circus's own wiki
+missions/<id>/       brief, status, transcript, review for each mission
+missions/done/<id>/  archive after close-mission.sh
+inbox.json           snapshot of active missions
+inbox.jsonl          append-only log of worker pings (no tmux interrupts)
 ```
 
 ## Dependencies
