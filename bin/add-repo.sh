@@ -94,6 +94,7 @@ DEST="$CIRCUS_REPOS_DIR/$NAME"
 
 log "cloning $CLONE_URL -> $DEST"
 git clone "$CLONE_URL" "$DEST"
+ensure_trusted "$DEST"
 
 DEFAULT_BRANCH=$(git -C "$DEST" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
 [[ -n "$DEFAULT_BRANCH" ]] || DEFAULT_BRANCH=$(git -C "$DEST" rev-parse --abbrev-ref HEAD)

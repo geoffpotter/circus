@@ -57,12 +57,6 @@ mission_brief() { printf '%s/%s/brief.md' "$CIRCUS_MISSIONS_DIR" "$1"; }
 mission_transcript() { printf '%s/%s/transcript.log' "$CIRCUS_MISSIONS_DIR" "$1"; }
 mission_summary() { printf '%s/%s/summary.md' "$CIRCUS_MISSIONS_DIR" "$1"; }
 
-# Tmux session names
-legman_session() { printf 'legman-%s' "$1"; }
-watcher_session() { printf 'watcher-%s' "$1"; }
-ferret_session() { printf 'ferret-%s' "$1"; }
-handler_session() { printf 'handler'; }
-
 # repo_field <name> <yaml-path>
 # e.g. repo_field testbed .category
 repo_field() {
@@ -176,63 +170,6 @@ rebuild_inbox() {
   jq -n --argjson missions "$entries" --arg now "$(now_iso)" '{missions: $missions, updated_at: $now}' > "$CIRCUS_INBOX"
 }
 
-# Tmux helpers --------------------------------------------------------------
-
-tmux_session_exists() {
-  tmux has-session -t "$1" 2>/dev/null
-}
-
-# tmux_send <session> <message>
-# Sends a message to a Claude session running in tmux. Uses paste-buffer for
-# safety with multi-line / special-character messages, then Enter to submit.
-tmux_send() {
-  local session="$1" msg="$2"
-  tmux_session_exists "$session" || die "no tmux session: $session"
-  local buf="circus-send-$$"
-  tmux set-buffer -b "$buf" -- "$msg"
-  tmux paste-buffer -b "$buf" -t "$session" -p
-  tmux delete-buffer -b "$buf" 2>/dev/null || true
-  sleep 0.2
-  tmux send-keys -t "$session" Enter
-}
-
-# tmux_capture <session> [lines]
-tmux_capture() {
-  local session="$1" lines="${2:-200}"
-  tmux_session_exists "$session" || die "no tmux session: $session"
-  tmux capture-pane -t "$session" -p -S "-$lines"
-}
-
-# auto_dismiss_trust <session> [timeout-seconds]
-# When Claude starts in a fresh worktree, it shows a workspace-trust dialog
-# asking the user to confirm. We poll the pane and answer "1" (trust) so
-# the worker can proceed. Idempotent — bails if the dialog doesn't appear
-# within the timeout (assume it's already trusted or skipped).
-auto_dismiss_trust() {
-  local session="$1" timeout="${2:-20}"
-  local i=0
-  while (( i < timeout )); do
-    if tmux_session_exists "$session"; then
-      local pane
-      pane=$(tmux capture-pane -t "$session" -p -S -50 2>/dev/null || true)
-      if printf '%s' "$pane" | grep -qi "trust this folder\|trust this workspace"; then
-        tmux send-keys -t "$session" "1"
-        sleep 0.1
-        tmux send-keys -t "$session" Enter
-        log "auto-dismissed trust dialog for $session"
-        return 0
-      fi
-      # If the prompt is already up (we see the regular Claude UI), bail.
-      if printf '%s' "$pane" | grep -qE "^[│║] "; then
-        return 0
-      fi
-    fi
-    sleep 1
-    (( i += 1 )) || true
-  done
-  return 0
-}
-
 # Handler comms -------------------------------------------------------------
 
 # notify_handler <mission-id> <kind> <message>
@@ -326,6 +263,38 @@ status_close_issue() {
       gh issue comment "$num" --repo "$nwo" --body "$comment" >/dev/null 2>&1 || true
     fi
     gh issue close "$num" --repo "$nwo" >/dev/null 2>&1 || true
+  fi
+}
+
+# Claude Code workspace trust ----------------------------------------------
+#
+# Background sessions stall on a "Trust this folder?" dialog the first time
+# Claude Code starts in any new directory. There's no CLI flag to skip it.
+# We pre-write `hasTrustDialogAccepted: true` for the directory into
+# `~/.claude.json` so `claude --bg` proceeds without the dialog.
+#
+# Safe to call repeatedly. Atomic temp-file + rename to minimize the
+# window where the daemon could see a partial file.
+ensure_trusted() {
+  local dir="$1"
+  local config="$HOME/.claude.json"
+  [[ -d "$dir" ]] || return 0
+  [[ -f "$config" ]] || return 0
+  # Already trusted? short-circuit
+  local cur
+  cur=$(jq --arg d "$dir" '.projects[$d].hasTrustDialogAccepted // false' "$config" 2>/dev/null)
+  [[ "$cur" == "true" ]] && return 0
+  local tmp="$config.tmp.$$"
+  if jq --arg d "$dir" '
+        .projects = (.projects // {}) |
+        .projects[$d] = (.projects[$d] // {}) |
+        .projects[$d].hasTrustDialogAccepted = true
+      ' "$config" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$config"
+    log "pre-accepted Claude Code workspace trust for $dir"
+  else
+    rm -f "$tmp" 2>/dev/null || true
+    log "WARNING: could not update workspace trust in $config (background session may stall on trust dialog)"
   fi
 }
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # close-mission.sh <mission-id>
 #
-# Tears down a completed mission: kills the tmux session, removes the
-# worktree, writes a summary, archives state to done/.
+# Tears down a completed mission: stops the legman & watcher background
+# sessions, removes their worktrees, closes the mirrored issue if any,
+# and archives state to done/.
 
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,16 +17,18 @@ M_DIR=$(mission_dir "$MISSION_ID")
 STATUS_FILE=$(mission_status "$MISSION_ID")
 WORKTREE=$(jq -r '.worktree // ""' "$STATUS_FILE")
 WATCHER_WORKTREE=$(jq -r '.watcher_worktree // ""' "$STATUS_FILE")
-SESSION=$(jq -r '.tmux_session // ""' "$STATUS_FILE")
-WATCHER_SESSION=$(jq -r '.watcher_session // ""' "$STATUS_FILE")
+SESSION_ID=$(jq -r '.session_id // ""' "$STATUS_FILE")
+WATCHER_SESSION_ID=$(jq -r '.watcher_session_id // ""' "$STATUS_FILE")
 REPO=$(jq -r '.repo // ""' "$STATUS_FILE")
-REPO_PATH=$(repo_field "$REPO" '.path' 2>/dev/null || echo "")
+REPO_PATH=""
+[[ -n "$REPO" && "$REPO" != "(ferret)" ]] && REPO_PATH=$(repo_path "$REPO")
 
-kill_session() {
+stop_session() {
   local s="$1"
-  if [[ -n "$s" ]] && tmux_session_exists "$s"; then
-    log "killing tmux session $s"
-    tmux kill-session -t "$s"
+  if [[ -n "$s" && "$s" != "null" ]]; then
+    log "stopping background session $s"
+    claude stop "$s" 2>/dev/null || true
+    claude rm "$s" 2>/dev/null || true
   fi
 }
 
@@ -41,14 +44,13 @@ remove_worktree() {
   fi
 }
 
-kill_session "$SESSION"
-kill_session "$WATCHER_SESSION"
+stop_session "$SESSION_ID"
+stop_session "$WATCHER_SESSION_ID"
 remove_worktree "$WORKTREE"
 remove_worktree "$WATCHER_WORKTREE"
 
 # Mark closed + close the mirrored GH issue (if any). The PR's `Closes #N`
-# usually does this on merge, but call again for missions that didn't merge
-# (revisions abandoned, or contributor missions that never went upstream).
+# usually does this on merge, but call again for missions that didn't merge.
 status_set_state "$MISSION_ID" "closed"
 status_close_issue "$MISSION_ID" "Mission closed via close-mission.sh"
 mkdir -p "$CIRCUS_DONE_DIR"

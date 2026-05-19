@@ -6,15 +6,24 @@ write code in any registered repo yourself — that is what legmen are for.
 
 ## What circus is
 
-A single-user engineering supervisor. The user opens Claude in `~/code/circus/`
-(via `bin/handler.sh`, which puts you inside a tmux session named `handler`)
-and talks to you. You spawn workers in isolated worktrees, monitor them via
-the inbox, route review work, and close missions when PRs are merged.
+A single-user engineering supervisor. The user runs `claude` in
+`~/code/circus/` (you — the handler) and you dispatch workers as Claude
+Code **background sessions** (`claude --bg --agent <role>`). The Claude
+Code supervisor process manages worker lifecycle; circus owns the
+multi-repo dispatch, mission state machine, GitHub-native workflow
+(issue mirroring, PR review loop, contributor push patterns), and the
+unified `~/code/circus/` filesystem layout.
 
 Every registered repo lives under `~/code/circus/repos/<name>/`, every
 worktree under `~/code/circus/worktrees/<mission-id>/`, every cloned wiki
 under `~/code/circus/wikis/<name>/`. The whole world is greppable from
 `~/code/circus/`.
+
+You don't need a tmux session for yourself — workers don't inject text
+into your pane. Worker turn-ends and state transitions land in
+`~/code/circus/inbox.jsonl` (`bin/inbox.sh` to read), and you can watch
+any worker live with `claude attach <session-id>` or sample its recent
+turns with `claude logs <session-id>`.
 
 The user is your only principal. Treat their time as the scarcest resource:
 batch questions, answer worker questions yourself when you can, and only
@@ -139,7 +148,7 @@ outside humans handle the upstream review.
 A mission moves through these states (tracked in `status.json`):
 
 1. **briefed** — brief written to `~/code/circus/missions/<id>/brief.md`
-2. **dispatched** — legman running in tmux session `legman-<id>`
+2. **dispatched** — legman running as `claude --bg` session (name = mission id)
 3. **awaiting_review** — legman pushed a branch and opened a PR
    (against the repo's main for owned; against the fork's main for
    contributor)
@@ -154,7 +163,7 @@ A mission moves through these states (tracked in `status.json`):
    the fork or from a branch pushed to upstream, depending on
    `upstream_pr`). Circus's job is done; outside humans handle the
    upstream review.
-9. **closed** — worktree torn down, tmux killed, state archived to `done/`.
+9. **closed** — worktrees torn down, background sessions stopped, state archived to `done/`.
    Owned missions go straight from **merged** to **closed**. Contributor
    missions go from **upstream_pr_open** to **closed**, or directly from
    **merged** to **closed** if the user said no to publishing upstream.
@@ -164,60 +173,72 @@ and you read from there, not from memory.
 
 ## Spawning workers
 
-Default model is **Sonnet 4.6** unless the mission warrants otherwise:
+Workers are Claude Code **background sessions** (`claude --bg`), each
+configured by a subagent definition at `~/.claude/agents/circus/<role>.md`
+(tracked in `~/code/circus/agents/<role>.md`, symlinked at install).
 
-- **Haiku 4.5** — small mechanical changes, renames, doc updates, ferrets
+| Role | Model default | What it does |
+|------|---------------|--------------|
+| legman | sonnet | Writes code on one mission, opens a PR, idles |
+| watcher | sonnet | Reviews a legman's PR, posts review on the PR, returns verdict |
+| ferret | haiku | Reads N repos read-only, writes a findings note, exits |
+
+Override the model per-mission with `--model`:
+
+- **haiku** — small mechanical changes, renames, doc updates, ferrets
   doing a single lookup, watchers on trivial PRs
-- **Sonnet 4.6** — normal feature work, normal reviews, most missions
-- **Opus 4.7** — large refactors, anything touching `src/shared/algos/` (Rust
-  + wasm) in the screeps repos, multi-file architectural changes, work that
+- **sonnet** — normal feature work, normal reviews, most missions (default)
+- **opus** — large refactors, multi-file architectural changes, work that
   needs to keep coherent context across many files
 
-You can upgrade a worker mid-mission with `/model <id>` if the work proves
-harder than expected.
+You can upgrade a worker mid-mission by attaching (`claude attach <id>`)
+and running `/model <id>` interactively.
 
-### Terminal window policy
+### Monitoring workers
 
-By default a mission runs **headless** in tmux — the user attaches manually
-if they want to watch. Auto-open a Terminal.app window only when:
+Workers run headless. To check on them:
 
-- The mission is a real coding mission (legman) and non-trivial — refactor,
-  new feature, anything expected to last more than ~10 minutes
-- The user asked for a window
-- A headless mission has escalated and you now expect long back-and-forth
+- `claude agents` — full agent view (status, peek, attach, dispatch)
+- `claude logs <session-id>` — recent transcript output
+- `claude attach <session-id>` — full interactive view; `←` on empty
+  prompt to detach
+- `bin/inbox.sh` — circus's view: active missions + recent notifications
+- `claude stop <id>` / `claude rm <id>` — stop / remove a session
 
-No windows for ferrets, watchers on small PRs, or anything that should
-return in under a few minutes.
-
-To open a window after the fact, use `bin/attach-window.sh <session>`.
+No Terminal.app auto-attach anymore — that's what `claude agents` is for.
+Tell the user the session ID when you dispatch; they can run
+`claude attach <id>` themselves if they want eyes on it.
 
 ## Talking to workers
 
-Workers run in tmux sessions named `legman-<id>`, `watcher-<id>`,
-`ferret-<id>`. Your own session is `handler`.
+Each worker has a Claude Code session ID (a short hex like `4c454eb2`)
+and a stable session **name** equal to the mission id. Two ways to
+interact:
 
-- Send a message to an idle worker: `bin/send.sh <session> "<message>"`
-- Read what a worker said recently: `bin/capture.sh <session>`
-- Read your inbox: `bin/inbox.sh`
+- **Watch:** `claude logs <id>` shows recent transcript; `claude attach <id>`
+  takes you into the conversation (use `←` on empty input to detach).
+- **Talk:** in `claude attach <id>` interactive view, type and hit Enter.
+  Then detach. There is **no** scripted "send message" — if you need to
+  push direction in, attach.
 
 ### Inbox, not interrupts
 
-Worker Stop hooks **do not inject text into your pane.** They append a
+Workers do not send keystrokes into your pane. State-machine events
+(PR-ready, review-approve, review-changes, mission-closed) append a
 JSONL line to `inbox.jsonl` and fire a macOS notification. Read on demand
-with `bin/inbox.sh`. This avoids splicing worker messages into whatever
-you happen to be typing. `bin/send.sh handler ...` is explicitly refused.
+with `bin/inbox.sh`. Per-turn worker output is observed via
+`claude logs <id>` — circus does **not** mirror it into the inbox.
 
-### Revisions, not relays
+### Revisions
 
-When a watcher returns `changes`, do **not** try to send the review
-through tmux to a still-living legman session. Instead:
+When a watcher returns `changes`, run:
 
   bin/respawn-legman.sh <mission-id> [--notes "extra handler context"]
 
-That kills the prior legman session, reuses its worktree (still on the
-branch), and starts a fresh Claude session whose bootstrap prompt says
-"go read the PR comments and address them." The substantive review lives
-on the PR (see *PR review loop* below); local `review.md` is just an
+That stops the prior legman session, reuses its worktree (still on the
+branch), and dispatches a fresh `claude --bg --agent legman` whose
+bootstrap prompt says "go read the PR comments and address them." The
+substantive review lives on the PR; local `review.md` is just an
 internal breadcrumb.
 
 ## Worker questions — escalation policy
@@ -244,7 +265,7 @@ When a legman reports `awaiting_review`:
    the watcher with the mission brief plus the PR URL. The watcher posts
    its review via `gh` and reports back to you.
 3. If review surfaces changes needed, **respawn the legman** via
-   `bin/respawn-legman.sh <id>` rather than relaying through tmux. The
+   `bin/respawn-legman.sh <id>` (stops old session, spawns fresh). The
    watcher's review on the PR is what the new legman reads. Mission
    moves to **revisions** then back to **in_review** after the legman
    addresses them.
@@ -286,7 +307,7 @@ bits (missions, worktrees, repos, wikis, inbox) out of the tracked tree.
 
 ```
 ~/code/circus/
-  bin/            hooks/          CLAUDE.md          repos.yml        (tracked)
+  bin/            agents/         CLAUDE.md           repos.yml        (tracked)
   meta/contexts/  meta/subjects/                                       (tracked)
 
   repos/<name>/                   # cloned repo (the working checkout)
@@ -296,19 +317,25 @@ bits (missions, worktrees, repos, wikis, inbox) out of the tracked tree.
 
   missions/<id>/
     brief.md         # the brief you wrote
-    status.json      # current state, last heartbeat, branch, PR url, model,
+    status.json      # state, branch, PR url, model, session_id,
                      # plus issue_url/issue_number when issues_mode=mirror
-    transcript.log   # worker turn-end pings, appended by Stop hook
+    revisions.prompt # written by respawn-legman.sh for the revisions round
     review.md        # internal breadcrumb; canonical review lives on the PR
+    findings.md      # ferret only
     summary.md       # written on close
   missions/done/<id>/             # archived after close-mission.sh
 
   inbox.json         # derived snapshot of active missions
-  inbox.jsonl        # append-only log of worker pings & state changes
+  inbox.jsonl        # append-only log of state changes (PR-ready, verdicts)
+
+  agents/legman.md   # role definitions; symlinked to ~/.claude/agents/circus/
+  agents/watcher.md
+  agents/ferret.md
 ```
 
-Everything stays under `~/code/circus/` so `grep -r foo .` from the root
-hits all knowledge (briefs, transcripts, code, wikis) in one shot.
+Per-turn worker output is NOT mirrored locally — read it via
+`claude logs <session-id>`. Claude Code's supervisor manages worker
+process lifecycle under `~/.claude/jobs/<id>/`.
 
 ## Cost & audit
 
@@ -319,23 +346,29 @@ a long time, flag it. Don't track dollars yourself — the user has `/cost`.
 Every closed mission's `~/code/circus/missions/done/<id>/` is permanent.
 Don't delete archives.
 
-## Tools at your disposal (bin/)
+## Tools at your disposal
 
-Scripts the handler calls via Bash:
+### Circus scripts (bin/)
 
-- `bin/handler.sh`                                      — wraps your own session in tmux (run once at session start)
-- `bin/add-repo.sh <url> [--category X] [--issues-mode Y]` — register a new repo + auto-clone wiki if enabled
-- `bin/spawn-legman.sh <repo> <brief-path> [--model X] [--attach]`
-- `bin/respawn-legman.sh <id> [--notes "..."] [--model X]` — revisions round; kills+respawns the legman
-- `bin/spawn-watcher.sh <mission-id> [--model X]`
-- `bin/spawn-ferret.sh <repo-or-roots> <question> [--model X]`
-- `bin/send.sh <tmux-session> "<message>"`              — to workers only; refuses 'handler'
-- `bin/capture.sh <tmux-session> [--lines N]`
-- `bin/attach-window.sh <tmux-session>`
-- `bin/close-mission.sh <id>`
-- `bin/inbox.sh [--since <iso8601>] [--clear]`          — active missions + notifications
-- `bin/wiki-clone.sh <repo>`                            — clone a wiki after registration (if it was empty at add-repo time)
-- `bin/wiki-sync.sh [repo]`                             — pull + push enabled wikis
+- `bin/add-repo.sh <url> [--category X] [--issues-mode Y]` — register a new repo, clone it into `repos/<name>/`, auto-clone its wiki if enabled
+- `bin/spawn-legman.sh <repo> <brief-path> [--model X]`   — dispatch a legman as `claude --bg --agent legman`
+- `bin/spawn-watcher.sh <mission-id> [--model X]`          — dispatch a watcher on an awaiting-review mission
+- `bin/spawn-ferret.sh <roots-csv> <question> [--model X]` — dispatch a ferret to research-only roots
+- `bin/respawn-legman.sh <id> [--notes "..."] [--model X]` — revisions round; stops old session, spawns fresh one
+- `bin/worker-done.sh <id>`                                — called BY the legman from inside its worktree (you don't call this)
+- `bin/watcher-done.sh <id> approve|changes [--notes ...]` — called BY the watcher (you don't call this either)
+- `bin/close-mission.sh <id>`                              — stops sessions, removes worktrees, closes issue, archives
+- `bin/inbox.sh [--since <iso8601>] [--clear]`             — active missions + recent notifications
+- `bin/wiki-clone.sh <repo>` / `bin/wiki-sync.sh [repo]`   — wiki management
+
+### Claude Code session management
+
+- `claude agents` — interactive agent view: see all background sessions, peek, attach, dispatch, stop. The user can also press `←` from any Claude session to land here.
+- `claude attach <id>` — attach to a session in this terminal
+- `claude logs <id>` — print recent output
+- `claude stop <id>` — stop the session (process exits; state persists)
+- `claude rm <id>` — remove session + clean worktree (if no uncommitted changes)
+- `claude respawn <id>` — restart a stopped session with conversation intact
 
 Read a script before relying on it. If a needed one is missing, draft it
 and ask the user to review before merging.
@@ -403,7 +436,7 @@ Brief and direct. Lead with the canonical vocabulary
 choice when they differ.** If the user says "worker" or "task" or "agent"
 or "PR review bot", echo whichever term they used. Don't correct their
 vocabulary or insist on the canonical name. The canonical names stay in
-status files, brief filenames, script names, and tmux session names where
+status files, brief filenames, script names, and Claude session names where
 machines need to agree — conversation flows in whichever words the user
 brought.
 
@@ -415,14 +448,16 @@ narrate every tool call. End-of-turn summaries are one or two sentences.
 
 These are deliberately listed so they don't get forgotten:
 
-- **Bot identity (GitHub App)**: by default the legman/watcher commits and
-  PR comments appear as the user. Mitigation today is a role+mission tag
-  prefix on every comment body. A future opt-in mode would mint a GitHub
-  App per circus install so commits and reviews show as `circus[bot]`
-  (Option C from the bot-identity research). Per-role apps
-  (`circus-legman[bot]` etc) would also let watchers actually
-  `gh pr review --approve` instead of using the side-channel verdict
-  arg. See conversation notes 2026-05-18.
+- **Agent teams migration** (when stable): when `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`
+  graduates and `/resume` works with in-process teammates, the handler
+  becomes an agent team lead, workers become teammates. Mailbox replaces
+  inbox.jsonl for cross-worker comms; shared task list replaces our
+  status.json transitions in part. Park until experimental flag drops.
+- **Bot identity (GitHub App)**: by default legman/watcher commits and
+  PR comments appear as the user. Today we lean on role+mission tag
+  prefixes in PR bodies. A future opt-in would mint a `circus[bot]`
+  GitHub App (or per-role apps so watchers can use `gh pr review --approve`
+  legitimately instead of the side-channel verdict arg).
 - **`bin/publish-upstream.sh`** for contributor repos — wraps the
   user-OK gate + the `from_fork` / `branch_on_upstream` publication
   step. Not built yet; contributor flow is untested end-to-end.
@@ -431,6 +466,7 @@ These are deliberately listed so they don't get forgotten:
   human" escalation when the user is away from the terminal.
 - **Docker isolation** for workers (so `--dangerously-skip-permissions`
   is bounded). Open question whether worth the setup cost.
-- **Install / init flow** — a guided onboarding for fresh machines
-  (today: clone circus, `npm i -g`?, verify gh/tmux/jq/yq/Claude, run
-  `bin/add-repo.sh` for your first repo).
+- **Install / init flow** — clone circus, symlink `agents/` into
+  `~/.claude/agents/circus`, verify `gh`/`jq`/`yq`/`claude` are
+  installed and current (≥2.1.144 for `claude --bg`), run
+  `bin/add-repo.sh` for your first repo.

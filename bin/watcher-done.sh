@@ -43,17 +43,15 @@ REPO=$(jq -r '.repo' "$STATUS_FILE")
 PR_NUMBER=$(jq -r '.pr_number // empty' "$STATUS_FILE")
 PR_URL=$(jq -r '.pr_url // ""' "$STATUS_FILE")
 CATEGORY=$(repo_field "$REPO" '.category')
-WATCHER_WT=$(jq -r '.watcher_worktree // ""' "$STATUS_FILE")
 
 [[ -n "$PR_NUMBER" ]] || die "no PR number on mission $MISSION_ID"
 
 # Cd into the repo's main checkout (NOT the watcher worktree — watcher
 # worktrees are detached HEAD and gh trips on branch detection).
-CD_DIR=$(repo_field "$REPO" '.path')
+CD_DIR=$(repo_path "$REPO")
 [[ -n "$CD_DIR" && -d "$CD_DIR" ]] || die "repo path missing for: $REPO"
 cd "$CD_DIR"
-# Determine OWNER/REPO for gh --repo, belt-and-suspenders against detached state.
-REPO_NWO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+REPO_NWO=$(repo_nwo "$REPO")
 
 # Cache the verdict + internal notes locally for audit. The substantive
 # review lives on the PR itself (gh pr review --comment) — this file is a

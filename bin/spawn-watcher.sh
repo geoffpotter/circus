@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
 # spawn-watcher.sh <mission-id> [--model X]
 #
-# Spawn a watcher (reviewer) for an awaiting-review mission. The watcher
-# gets a detached worktree at the legman's branch tip, reads the diff via
-# gh, posts a review, and either merges (on approve) or returns notes to
-# the handler (on request-changes).
+# Dispatches a watcher background session via `claude --bg --agent watcher`.
+# Creates a detached-HEAD worktree at the legman's branch tip so it can
+# read the code without conflicting with the legman's worktree.
 
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/_lib.sh"
 
 usage() {
-  echo "usage: spawn-watcher.sh <mission-id> [--model X] [--attach]" >&2; exit 1
+  echo "usage: spawn-watcher.sh <mission-id> [--model X]" >&2; exit 1
 }
 
 [[ $# -ge 1 ]] || usage
 MISSION_ID="$1"; shift
 MODEL="claude-sonnet-4-6"
-ATTACH=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model) MODEL="$2"; shift 2;;
-    --attach) ATTACH=1; shift;;
     *) usage;;
   esac
 done
@@ -35,116 +32,71 @@ PR_URL=$(jq -r '.pr_url // ""' "$STATUS_FILE")
 PR_NUMBER=$(jq -r '.pr_number // empty' "$STATUS_FILE")
 [[ -n "$PR_URL" ]] || die "mission has no PR yet: $MISSION_ID"
 
-REPO_PATH=$(repo_field "$REPO" '.path')
-WORKTREE_ROOT=$(repo_field "$REPO" '.worktree_root')
-CATEGORY=$(repo_field "$REPO" '.category')
+REPO_PATH=$(repo_path "$REPO")
 
-# Detached worktree at the branch tip so we don't conflict with the legman's tree
-WATCHER_WORKTREE="$WORKTREE_ROOT/${MISSION_ID}-watcher"
+# Detached-HEAD worktree at branch tip — separate from legman's worktree.
+WATCHER_WORKTREE="$CIRCUS_WORKTREES_DIR/${MISSION_ID}-watcher"
 if [[ -d "$WATCHER_WORKTREE" ]]; then
-  log "watcher worktree already exists, reusing: $WATCHER_WORKTREE"
+  log "watcher worktree exists, reusing: $WATCHER_WORKTREE"
 else
   log "creating watcher worktree at $WATCHER_WORKTREE"
-  # Fetch the legman's pushed branch to make sure we see it
   git -C "$REPO_PATH" fetch origin "$BRANCH" 2>/dev/null || true
   git -C "$REPO_PATH" worktree add --detach "$WATCHER_WORKTREE" "origin/$BRANCH" 2>/dev/null \
     || git -C "$REPO_PATH" worktree add --detach "$WATCHER_WORKTREE" "$BRANCH"
 fi
 
-# Wire up Stop hook
-mkdir -p "$WATCHER_WORKTREE/.claude"
-cat > "$WATCHER_WORKTREE/.claude/settings.local.json" <<JSON
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CIRCUS_ROOT/hooks/worker-stop.sh $MISSION_ID watcher"
-          }
-        ]
-      }
-    ]
-  }
-}
-JSON
-
-# Mark mission state in_review and record watcher session
-WATCHER_SESSION=$(watcher_session "$MISSION_ID")
-status_set "$MISSION_ID" "state" "in_review"
-status_set "$MISSION_ID" "watcher_session" "$WATCHER_SESSION"
+WATCHER_SESSION_NAME="${MISSION_ID}-watcher"
+status_set_state "$MISSION_ID" "in_review"
+status_set "$MISSION_ID" "watcher_session_name" "$WATCHER_SESSION_NAME"
 status_set "$MISSION_ID" "watcher_worktree" "$WATCHER_WORKTREE"
 
-# Bootstrap prompt
 M_DIR=$(mission_dir "$MISSION_ID")
 BRIEF_PATH=$(mission_brief "$MISSION_ID")
-PROMPT_FILE="$M_DIR/watcher.prompt"
-cat > "$PROMPT_FILE" <<PROMPT
-You are a watcher in circus reviewing mission $MISSION_ID for repo $REPO.
 
-The legman has opened PR: $PR_URL
-Mission brief: $BRIEF_PATH
-Your worktree (detached HEAD at branch tip): $WATCHER_WORKTREE — read files freely.
+PROMPT=$(cat <<EOF
+Mission: $MISSION_ID
+Repo: $REPO
+PR: $PR_URL (#$PR_NUMBER)
+Brief: $BRIEF_PATH
+Worktree (cwd, detached HEAD at branch tip): $WATCHER_WORKTREE
+Mission dir: $M_DIR
 
-Your job:
-1. Read the brief.
-2. Read the diff: gh pr diff $PR_NUMBER
-3. Inspect any files you want, in this worktree.
-4. Post your review on the PR — this is the **canonical** record of the
-   review. Future legmen (on revisions) read from here, not from a local
-   file:
-     gh pr review $PR_NUMBER --comment --body "<your review>"
-   The body should be a tight markdown review: a verdict line, then
-   specific concerns with file:line references where applicable. Inline
-   per-line comments are fine too if you want to call out specific
-   lines; use gh's --comment plus inline pending review flow if you do.
-   (Don't try to use --approve: GitHub forbids approving your own PRs
-   and the legman ran under the same account. We approve internally.)
-5. Decide your verdict and finalize. ONE of:
-     $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID approve [--notes "..."]
-     $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID changes  [--notes "..."]
-   On 'approve', the PR is squash-merged and the handler is pinged.
-   On 'changes', the mission moves to 'revisions'; a fresh legman is
-   respawned by the handler, reads your PR review via gh, and addresses
-   it. --notes here is just an internal audit string for the handler;
-   the substantive review lives on the PR.
+Review the PR per your role instructions. Post your review on the PR via
+\`gh pr review $PR_NUMBER --comment\`, then report verdict via:
+  $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID approve [--notes "..."]
+  $CIRCUS_ROOT/bin/watcher-done.sh $MISSION_ID changes  [--notes "..."]
+EOF
+)
 
-Review standards:
-- The brief is the source of truth for scope. Don't request changes beyond the brief.
-- Look for: correctness, tests if applicable, obvious bugs, security issues,
-  scope creep, broken style consistency.
-- Be concise. Reviewers who write paragraphs don't get read.
+ensure_trusted "$WATCHER_WORKTREE"
 
-After running watcher-done.sh, your job is done. You can stop.
-PROMPT
-
-LAUNCH_FILE="$M_DIR/watcher-launch.sh"
-cat > "$LAUNCH_FILE" <<LAUNCH
-#!/usr/bin/env bash
-set -e
-cd "$WATCHER_WORKTREE"
-exec claude --dangerously-skip-permissions \\
-  --model "$MODEL" \\
-  --add-dir "$M_DIR" \\
-  -n "$WATCHER_SESSION" \\
-  "\$(cat "$PROMPT_FILE")"
-LAUNCH
-chmod +x "$LAUNCH_FILE"
-
-log "starting watcher tmux session: $WATCHER_SESSION"
-tmux new-session -d -s "$WATCHER_SESSION" -c "$WATCHER_WORKTREE" "$LAUNCH_FILE"
-auto_dismiss_trust "$WATCHER_SESSION"
-
-if [[ "$ATTACH" -eq 1 ]]; then
-  "$HERE/attach-window.sh" "$WATCHER_SESSION"
+log "dispatching watcher (model=$MODEL)"
+SESSION_OUTPUT=$(
+  cd "$WATCHER_WORKTREE" && \
+  claude --bg \
+    --agent watcher \
+    --name "$WATCHER_SESSION_NAME" \
+    --model "$MODEL" \
+    --dangerously-skip-permissions \
+    --add-dir "$M_DIR" \
+    "$PROMPT" 2>&1
+)
+SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)
+if [[ -z "$SESSION_ID" ]]; then
+  log "WARNING: could not parse session id from claude --bg output:"
+  printf '%s\n' "$SESSION_OUTPUT" | sed 's/^/  /' >&2
 fi
 
+[[ -n "$SESSION_ID" ]] && status_set "$MISSION_ID" "watcher_session_id" "$SESSION_ID"
+
 cat <<EOF
-mission:  $MISSION_ID
-session:  $WATCHER_SESSION
-worktree: $WATCHER_WORKTREE
-pr:       $PR_URL
-model:    $MODEL
+mission:    $MISSION_ID
+session:    ${SESSION_ID:-(unknown)}
+worktree:   $WATCHER_WORKTREE
+pr:         $PR_URL
+model:      $MODEL
+
+Monitor:    claude agents
+Attach:     claude attach $SESSION_ID
+Logs:       claude logs $SESSION_ID
 EOF

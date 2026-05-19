@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# spawn-legman.sh <repo> <brief-path> [--model X] [--attach]
+# spawn-legman.sh <repo> <brief-path> [--model X]
 #
-# Spawns a legman (coding worker) on a repo. Creates a worktree, configures
-# identity + remotes, wires up the Stop hook, writes initial status, starts
-# a detached tmux session running Claude in interactive mode, optionally
-# attaches a Terminal.app window.
+# Dispatches a legman background session via `claude --bg --agent legman`.
+# Workflow:
+#   1. Create worktree on circus/<mission-id> branched from default
+#   2. Apply identity for that repo
+#   3. If repo is issues_mode=mirror, create the GH issue
+#   4. Init status.json
+#   5. cd into worktree, dispatch claude --bg, capture session ID
+#   6. Print summary
+#
+# Claude Code's supervisor manages the session lifecycle (running, idle,
+# stopping, restarting). We don't use tmux for workers.
 
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,11 +19,10 @@ source "$HERE/_lib.sh"
 
 usage() {
   cat <<'EOF' >&2
-usage: spawn-legman.sh <repo> <brief-path> [--model X] [--attach]
+usage: spawn-legman.sh <repo> <brief-path> [--model X]
   repo         Name of the repo as registered in repos.yml
   brief-path   Path to a markdown file describing the mission
   --model X    Claude model (default: claude-sonnet-4-6)
-  --attach     Open a Terminal.app window attached to the tmux session
 EOF
   exit 1
 }
@@ -24,11 +30,9 @@ EOF
 [[ $# -ge 2 ]] || usage
 REPO="$1"; BRIEF_SRC="$2"; shift 2
 MODEL="claude-sonnet-4-6"
-ATTACH=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model) MODEL="$2"; shift 2;;
-    --attach) ATTACH=1; shift;;
     *) usage;;
   esac
 done
@@ -37,7 +41,6 @@ repo_exists "$REPO" || die "repo not found in repos.yml: $REPO"
 [[ -f "$BRIEF_SRC" ]] || die "brief not found: $BRIEF_SRC"
 
 REPO_PATH=$(repo_path "$REPO")
-WORKTREE_ROOT=$(repo_worktree_root "$REPO")
 CATEGORY=$(repo_field "$REPO" '.category')
 DEFAULT_BRANCH=$(repo_field "$REPO" '.default_branch')
 [[ -n "$DEFAULT_BRANCH" ]] || DEFAULT_BRANCH="main"
@@ -47,25 +50,25 @@ ISSUES_MODE=$(repo_field "$REPO" '.issues_mode')
 [[ "$CATEGORY" == "reference" ]] && die "cannot spawn a legman on a reference repo: $REPO"
 [[ -d "$REPO_PATH" ]] || die "repo path missing on disk: $REPO_PATH"
 
-# Generate mission id from brief's first heading or first line.
+# Mission id from brief title
 BRIEF_TITLE=$(head -n 1 "$BRIEF_SRC" | sed -E 's/^#+ *//')
 [[ -n "$BRIEF_TITLE" ]] || BRIEF_TITLE="mission"
 MISSION_ID=$(generate_mission_id "$BRIEF_TITLE")
 M_DIR=$(mission_dir "$MISSION_ID")
 mkdir -p "$M_DIR"
 cp "$BRIEF_SRC" "$M_DIR/brief.md"
+BRIEF_PATH="$M_DIR/brief.md"
 
-# Create the worktree
-mkdir -p "$WORKTREE_ROOT"
-WORKTREE="$WORKTREE_ROOT/$MISSION_ID"
+# Worktree under shared circus tree, branch circus/<mission-id>
+WORKTREE="$CIRCUS_WORKTREES_DIR/$MISSION_ID"
 BRANCH="circus/$MISSION_ID"
 log "creating worktree $WORKTREE on branch $BRANCH (from $DEFAULT_BRANCH)"
 git -C "$REPO_PATH" worktree add -b "$BRANCH" "$WORKTREE" "$DEFAULT_BRANCH"
 
-# Apply identity if set
+# Identity for this repo
 ( cd "$WORKTREE" && apply_identity "$REPO" )
 
-# For contributor repos, ensure the upstream remote is set up
+# Contributor: ensure upstream remote
 if [[ "$CATEGORY" == "contributor" ]]; then
   UPSTREAM_URL=$(repo_field "$REPO" '.upstream_remote_url')
   if [[ -n "$UPSTREAM_URL" ]]; then
@@ -76,48 +79,28 @@ if [[ "$CATEGORY" == "contributor" ]]; then
   fi
 fi
 
-# Wire up the Stop hook in this worktree's .claude/settings.local.json
-mkdir -p "$WORKTREE/.claude"
-cat > "$WORKTREE/.claude/settings.local.json" <<JSON
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CIRCUS_ROOT/hooks/worker-stop.sh $MISSION_ID legman"
-          }
-        ]
-      }
-    ]
-  }
-}
-JSON
-
-# Mirror as a GitHub issue if the repo is configured for it.
+# Mirror as a GitHub issue if configured
 ISSUE_URL=""
 ISSUE_NUMBER=""
 ISSUE_NWO=""
 if [[ "$ISSUES_MODE" == "mirror" ]]; then
   ISSUE_NWO=$(repo_nwo "$REPO")
   if [[ -z "$ISSUE_NWO" ]]; then
-    log "WARNING: issues_mode=mirror but could not resolve nwo for $REPO — skipping issue creation"
+    log "WARNING: issues_mode=mirror but no nwo for $REPO — skipping issue"
   else
     log "creating mirror issue on $ISSUE_NWO"
-    ISSUE_URL=$(circus_issue_create "$ISSUE_NWO" "$BRIEF_TITLE" "$M_DIR/brief.md" | tail -1)
+    ISSUE_URL=$(circus_issue_create "$ISSUE_NWO" "$BRIEF_TITLE" "$BRIEF_PATH" | tail -1)
     ISSUE_NUMBER=$(printf '%s' "$ISSUE_URL" | sed -E 's|.*/issues/([0-9]+).*|\1|')
     log "issue: $ISSUE_URL"
   fi
 fi
 
-# Initial status.json
+# Initial status.json (session_id filled in after dispatch)
 STATUS_BLOB=$(jq -n \
   --arg repo "$REPO" \
   --arg branch "$BRANCH" \
   --arg worktree "$WORKTREE" \
-  --arg session "$(legman_session "$MISSION_ID")" \
+  --arg session_name "$MISSION_ID" \
   --arg model "$MODEL" \
   --arg category "$CATEGORY" \
   --arg state "dispatched" \
@@ -125,76 +108,69 @@ STATUS_BLOB=$(jq -n \
   --arg issue_url "$ISSUE_URL" \
   --arg issue_nwo "$ISSUE_NWO" \
   --arg issue_number "$ISSUE_NUMBER" \
-  '{repo: $repo, branch: $branch, worktree: $worktree, tmux_session: $session,
-    model: $model, category: $category, state: $state, worker_type: $worker_type,
-    pr_number: null, pr_url: null, summary: null,
+  '{repo: $repo, branch: $branch, worktree: $worktree, session_name: $session_name,
+    session_id: null, model: $model, category: $category, state: $state,
+    worker_type: $worker_type, pr_number: null, pr_url: null, summary: null,
     issue_url: (if $issue_url == "" then null else $issue_url end),
     issue_nwo: (if $issue_nwo == "" then null else $issue_nwo end),
     issue_number: (if $issue_number == "" then null else ($issue_number | tonumber) end)}')
 status_init "$MISSION_ID" "$STATUS_BLOB"
 
-# Stamp the initial state on the issue's label set (if we mirrored).
+# Stamp initial label on the issue if mirrored
 if [[ -n "$ISSUE_NUMBER" && -n "$ISSUE_NWO" ]]; then
   circus_issue_relabel "$ISSUE_NWO" "$ISSUE_NUMBER" "dispatched"
 fi
 
-# Bootstrap prompt for the worker
-SESSION=$(legman_session "$MISSION_ID")
+# Build the per-mission user prompt. The role system prompt comes from
+# ~/.claude/agents/circus/legman.md (symlinked from this repo's agents/).
+PROMPT=$(cat <<EOF
+Mission: $MISSION_ID
+Repo: $REPO ($CATEGORY)
+Worktree (cwd): $WORKTREE
+Branch: $BRANCH
+Brief: $BRIEF_PATH
+Mission dir: $M_DIR
+$([[ -n "$ISSUE_URL" ]] && echo "Mirrored issue: $ISSUE_URL")
 
-# Write the bootstrap prompt to a file for the launcher to read; avoids
-# shell-quoting hell when the prompt contains backticks, quotes, etc.
-PROMPT_FILE="$M_DIR/bootstrap.prompt"
-cat > "$PROMPT_FILE" <<PROMPT
-You are a legman in circus on mission $MISSION_ID.
+Read your brief and start work. When the PR is ready for review, run:
+  $CIRCUS_ROOT/bin/worker-done.sh $MISSION_ID
+EOF
+)
 
-Repo: $REPO
-Category: $CATEGORY
-Worktree (your cwd): $WORKTREE
-Branch you are on: $BRANCH
-Brief: $M_DIR/brief.md
+# Pre-accept Claude Code's workspace trust for the worktree, otherwise
+# the background session stalls on the trust dialog.
+ensure_trusted "$WORKTREE"
 
-Read your brief now and start work.
-
-Constraints:
-- Stay on this branch ($BRANCH). Do not switch branches.
-- Commit incrementally as you go (small, focused commits). Identity is already configured for this repo.
-- When the code is ready for review, run:
-    $CIRCUS_ROOT/bin/worker-done.sh $MISSION_ID
-  That pushes the branch, opens the PR, and notifies the handler.
-- After that, idle in this session. The handler or watcher may send you review notes — address them, push again, and the same script is safe to re-run.
-- If you have a question you cannot answer from the project, say so plainly in your next message. Your Stop hook forwards it to the handler.
-
-The mission's CLAUDE.md and any repo-level CLAUDE.md will be auto-loaded. The brief is the source of truth for the task.
-PROMPT
-
-# Per-mission launcher (avoids re-quoting issues every time)
-LAUNCH_FILE="$M_DIR/launch.sh"
-cat > "$LAUNCH_FILE" <<LAUNCH
-#!/usr/bin/env bash
-set -e
-cd "$WORKTREE"
-exec claude --dangerously-skip-permissions \\
-  --model "$MODEL" \\
-  --add-dir "$M_DIR" \\
-  -n "$MISSION_ID" \\
-  "\$(cat "$PROMPT_FILE")"
-LAUNCH
-chmod +x "$LAUNCH_FILE"
-
-# Launch tmux session running the launcher
-log "starting tmux session: $SESSION"
-tmux new-session -d -s "$SESSION" -c "$WORKTREE" "$LAUNCH_FILE"
-auto_dismiss_trust "$SESSION"
-
-# Optional Terminal.app attach
-if [[ "$ATTACH" -eq 1 ]]; then
-  "$HERE/attach-window.sh" "$SESSION"
+# Dispatch via claude --bg. cd into the worktree so Claude detects it's
+# already inside a linked git worktree and skips its own auto-isolation.
+log "dispatching legman (model=$MODEL)"
+SESSION_OUTPUT=$(
+  cd "$WORKTREE" && \
+  claude --bg \
+    --agent legman \
+    --name "$MISSION_ID" \
+    --model "$MODEL" \
+    --dangerously-skip-permissions \
+    --add-dir "$M_DIR" \
+    "$PROMPT" 2>&1
+)
+SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)
+if [[ -z "$SESSION_ID" ]]; then
+  log "WARNING: could not parse session id from claude --bg output:"
+  printf '%s\n' "$SESSION_OUTPUT" | sed 's/^/  /' >&2
 fi
 
+[[ -n "$SESSION_ID" ]] && status_set "$MISSION_ID" "session_id" "$SESSION_ID"
+
 cat <<EOF
-mission:  $MISSION_ID
-session:  $SESSION
-worktree: $WORKTREE
-branch:   $BRANCH
-model:    $MODEL
+mission:    $MISSION_ID
+session:    ${SESSION_ID:-(unknown)}
+worktree:   $WORKTREE
+branch:     $BRANCH
+model:      $MODEL
+issue:      ${ISSUE_URL:-—}
+
+Monitor:    claude agents
+Attach:     claude attach $SESSION_ID
+Logs:       claude logs $SESSION_ID
 EOF
