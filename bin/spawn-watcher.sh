@@ -85,7 +85,7 @@ SESSION_OUTPUT=$(
     --dangerously-skip-permissions \
     "$PROMPT" 2>&1
 )
-SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)
+SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | sed -E $'s/\x1b\\[[0-9;]*m//g' | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)
 if [[ -z "$SESSION_ID" ]]; then
   log "WARNING: could not parse session id from claude --bg output:"
   printf '%s\n' "$SESSION_OUTPUT" | sed 's/^/  /' >&2
