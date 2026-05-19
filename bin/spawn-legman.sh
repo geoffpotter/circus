@@ -137,9 +137,16 @@ Read your brief and start work. When the PR is ready for review, run:
 EOF
 )
 
-# Pre-accept Claude Code's workspace trust for the worktree, otherwise
-# the background session stalls on the trust dialog.
+# Pre-accept Claude Code's workspace trust for the worktree.
 ensure_trusted "$WORKTREE"
+
+# Per-mission settings file: persists the additional dir (the mission dir,
+# so the worker can read its brief.md) as session config. We use this
+# instead of `--add-dir` because `--add-dir` triggers an interactive
+# startup dialog that hangs `claude --bg`.
+SETTINGS_FILE="$M_DIR/.claude-settings.json"
+jq -n --arg dir "$M_DIR" \
+  '{permissions: {additionalDirectories: [$dir]}}' > "$SETTINGS_FILE"
 
 # Dispatch via claude --bg. cd into the worktree so Claude detects it's
 # already inside a linked git worktree and skips its own auto-isolation.
@@ -150,8 +157,8 @@ SESSION_OUTPUT=$(
     --agent legman \
     --name "$MISSION_ID" \
     --model "$MODEL" \
+    --settings "$SETTINGS_FILE" \
     --dangerously-skip-permissions \
-    --add-dir "$M_DIR" \
     "$PROMPT" 2>&1
 )
 SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)

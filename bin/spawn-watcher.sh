@@ -70,6 +70,10 @@ EOF
 
 ensure_trusted "$WATCHER_WORKTREE"
 
+SETTINGS_FILE="$M_DIR/.claude-settings-watcher.json"
+jq -n --arg dir "$M_DIR" \
+  '{permissions: {additionalDirectories: [$dir]}}' > "$SETTINGS_FILE"
+
 log "dispatching watcher (model=$MODEL)"
 SESSION_OUTPUT=$(
   cd "$WATCHER_WORKTREE" && \
@@ -77,8 +81,8 @@ SESSION_OUTPUT=$(
     --agent watcher \
     --name "$WATCHER_SESSION_NAME" \
     --model "$MODEL" \
+    --settings "$SETTINGS_FILE" \
     --dangerously-skip-permissions \
-    --add-dir "$M_DIR" \
     "$PROMPT" 2>&1
 )
 SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)

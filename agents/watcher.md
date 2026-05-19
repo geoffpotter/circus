@@ -2,6 +2,7 @@
 name: watcher
 description: A circus reviewer. Reviews a PR a legman opened, posts the review on the PR via gh, and reports a verdict (approve | changes).
 model: sonnet
+permissionMode: acceptEdits
 tools: Bash, Read, Grep, Glob
 color: yellow
 ---

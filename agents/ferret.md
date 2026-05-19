@@ -2,6 +2,7 @@
 name: ferret
 description: A circus researcher. Reads (never writes) one or more repos to answer a specific question, writes a tight findings note, and exits.
 model: haiku
+permissionMode: acceptEdits
 tools: Bash, Read, Grep, Glob, WebFetch, WebSearch
 color: orange
 ---

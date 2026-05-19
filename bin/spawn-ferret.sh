@@ -88,13 +88,17 @@ print "DONE" and stop.
 EOF
 )
 
-ADD_DIR_ARGS=( "--add-dir" "$M_DIR" )
-for r in "${ROOTS[@]}"; do
-  ADD_DIR_ARGS+=( "--add-dir" "$r" )
-done
-
 ensure_trusted "$CWD"
 for r in "${ROOTS[@]}"; do ensure_trusted "$r"; done
+
+# Persist extra dirs in a settings file (--add-dir would hang --bg on a
+# startup dialog; --settings does not).
+SETTINGS_FILE="$M_DIR/.claude-settings.json"
+EXTRA_DIRS_JSON=$(jq -n --arg m "$M_DIR" --arg cwd "$CWD" \
+  --argjson rest "$(printf '%s\n' "${ROOTS[@]:1}" | jq -R . | jq -s .)" \
+  '[$m] + [$cwd] + $rest | unique')
+jq -n --argjson dirs "$EXTRA_DIRS_JSON" \
+  '{permissions: {additionalDirectories: $dirs}}' > "$SETTINGS_FILE"
 
 log "dispatching ferret (model=$MODEL)"
 SESSION_OUTPUT=$(
@@ -103,8 +107,8 @@ SESSION_OUTPUT=$(
     --agent ferret \
     --name "$MISSION_ID" \
     --model "$MODEL" \
+    --settings "$SETTINGS_FILE" \
     --dangerously-skip-permissions \
-    "${ADD_DIR_ARGS[@]}" \
     "$PROMPT" 2>&1
 )
 SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)

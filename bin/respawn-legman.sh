@@ -102,6 +102,10 @@ PROMPT=$(cat "$PROMPT_FILE")
 
 ensure_trusted "$WORKTREE"
 
+SETTINGS_FILE="$M_DIR/.claude-settings.json"
+jq -n --arg dir "$M_DIR" \
+  '{permissions: {additionalDirectories: [$dir]}}' > "$SETTINGS_FILE"
+
 log "dispatching fresh legman for revisions (model=$MODEL)"
 SESSION_OUTPUT=$(
   cd "$WORKTREE" && \
@@ -109,8 +113,8 @@ SESSION_OUTPUT=$(
     --agent legman \
     --name "$SESSION_NAME" \
     --model "$MODEL" \
+    --settings "$SETTINGS_FILE" \
     --dangerously-skip-permissions \
-    --add-dir "$M_DIR" \
     "$PROMPT" 2>&1
 )
 SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)

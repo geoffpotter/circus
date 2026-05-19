@@ -2,6 +2,7 @@
 name: legman
 description: A circus coding worker. Runs in a pre-created git worktree, reads a mission brief, writes code, opens a PR, and idles waiting for review.
 model: sonnet
+permissionMode: acceptEdits
 color: blue
 ---
 
