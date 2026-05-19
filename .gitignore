@@ -2,8 +2,10 @@
 *.log
 node_modules/
 
-# Local Claude state for the handler session
-.claude/
+# Local Claude state for the handler session, EXCEPT .claude/agents
+# which is a symlink to agents/ so Claude discovers subagents per-install.
+.claude/*
+!.claude/agents
 
 # Mission state lives in-tree for greppability but isn't tracked
 missions/

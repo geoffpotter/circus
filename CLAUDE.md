@@ -174,8 +174,12 @@ and you read from there, not from memory.
 ## Spawning workers
 
 Workers are Claude Code **background sessions** (`claude --bg`), each
-configured by a subagent definition at `~/.claude/agents/circus/<role>.md`
-(tracked in `~/code/circus/agents/<role>.md`, symlinked at install).
+configured by a project-scope subagent definition. Each install owns
+its own copy of the role definitions, tracked at `<install>/agents/<role>.md`
+and symlinked at `<install>/.claude/agents/` so Claude Code's per-directory
+subagent discovery picks them up. Forks of a circus install can diverge
+agent definitions per-fork (e.g. tighter tool allowlists, screeps-specific
+review heuristics) without affecting other installs.
 
 | Role | Model default | What it does |
 |------|---------------|--------------|
@@ -328,7 +332,7 @@ bits (missions, worktrees, repos, wikis, inbox) out of the tracked tree.
   inbox.json         # derived snapshot of active missions
   inbox.jsonl        # append-only log of state changes (PR-ready, verdicts)
 
-  agents/legman.md   # role definitions; symlinked to ~/.claude/agents/circus/
+  agents/legman.md   # role definitions; .claude/agents/ symlinks here (project-scope)
   agents/watcher.md
   agents/ferret.md
 ```
@@ -466,7 +470,8 @@ These are deliberately listed so they don't get forgotten:
   human" escalation when the user is away from the terminal.
 - **Docker isolation** for workers (so `--dangerously-skip-permissions`
   is bounded). Open question whether worth the setup cost.
-- **Install / init flow** — clone circus, symlink `agents/` into
-  `~/.claude/agents/circus`, verify `gh`/`jq`/`yq`/`claude` are
-  installed and current (≥2.1.144 for `claude --bg`), run
+- **Install / init flow** — clone circus, ensure `.claude/agents`
+  symlinks to `agents/` (done at clone time), verify
+  `gh`/`jq`/`yq`/`claude` are installed and current (≥2.1.144 for
+  `claude --bg`), run
   `bin/add-repo.sh` for your first repo.

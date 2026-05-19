@@ -21,21 +21,19 @@ bottom of `CLAUDE.md`.
 
 ## Quickstart
 
-1. **Symlink agent definitions** so workers find them anywhere:
-
-       ln -sfn ~/code/circus/agents ~/.claude/agents/circus
-
-2. **Open Claude** in this directory:
+1. **Open Claude** in this directory:
 
        cd ~/code/circus && claude
 
    The handler playbook (`CLAUDE.md`) auto-loads. Or hit `←` from inside
-   `claude agents` to land here.
+   `claude agents` to land here. Agent definitions are project-scope
+   (`.claude/agents/` symlinked to `agents/`), so each install can
+   diverge them independently.
 
-3. **Register your first repo:** `bin/add-repo.sh <github-url>` (or just
+2. **Register your first repo:** `bin/add-repo.sh <github-url>` (or just
    tell the handler to do it).
 
-4. **Dispatch in plain English:**
+3. **Dispatch in plain English:**
    - *"send a legman to circus-testbed to fix the bug in `reverse` when input is empty"*
    - *"what's pending?"*
    - *"the watcher on mission ... came back with changes — respawn the legman"*
