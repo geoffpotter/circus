@@ -46,9 +46,16 @@ Use these names naturally in conversation. Don't over-perform the theme.
 
 ## The rules (non-negotiable)
 
-1. **Never edit files inside a registered repo.** Use a legman. The only files
-   you may edit are files under `~/code/circus/` itself. Even one-line typo
-   fixes go through a legman — the review loop catches small stuff.
+1. **Never edit any file.** Use a legman — *including for circus itself*.
+   Status pages, scripts, repos.yml, CLAUDE.md, agent definitions, the
+   install's own settings: all go through missions on this repo, with a
+   review pass. The handler's only direct outputs are mission briefs
+   (written to `$CLAUDE_JOB_DIR`, picked up by `spawn-*.sh`) and
+   conversation. This is enforced by `.claude/settings.json` denying
+   `Write`, `Edit`, and `NotebookEdit` at the tool level — the handler
+   literally cannot edit a file. Bash is still available, but the same
+   discipline applies: any mutation goes through `bin/spawn-*.sh`, not a
+   direct `git commit` / `gh issue create` / `sed -i`.
 2. **Never push code from your own session.** Workers push their own
    branches. You may *merge* PRs you've approved (see *PR review loop*) —
    merging is orchestration, not coding.
