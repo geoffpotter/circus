@@ -516,6 +516,7 @@ startup — so it's faster for quick in-and-out repairs.
 - `bin/inbox.sh [--since <iso8601>] [--clear]`             — active missions + recent notifications
 - `bin/wiki-clone.sh <repo>` / `bin/wiki-sync.sh [repo]`   — wiki management (whole knowledge base)
 - `bin/status-sync.sh [repo]`                              — push meta/repo-status/<name>.md → <name>.wiki/Status.md (status_wiki: on)
+- `bin/publish-upstream.sh [<upstream-path>] <branch> <commits...>` — cherry-pick commits from this install into an upstream repo, push branch, open PR (`--dry-run`, `--force`, `--title`, `--body-file`); upstream path defaults to `upstream_general.path` in repos.yml
 
 ### Claude Code session management
 
@@ -653,9 +654,6 @@ These are deliberately listed so they don't get forgotten:
   for the implementation. A future opt-in would mint a `circus[bot]`
   GitHub App (or per-role apps so watchers can use `gh pr review --approve`
   legitimately instead of the side-channel verdict arg).
-- **`bin/publish-upstream.sh`** for contributor repos — wraps the
-  user-OK gate + the `from_fork` / `branch_on_upstream` publication
-  step. Not built yet; contributor flow is untested end-to-end.
 - **Cron / scheduled inbox digest** (daily 9am wake).
 - **Slack/iMessage notifications** beyond local osascript for "needs
   human" escalation when the user is away from the terminal.
