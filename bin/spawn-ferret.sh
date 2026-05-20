@@ -50,6 +50,7 @@ MISSION_ID=$(generate_mission_id "$QUESTION")
 M_DIR=$(mission_dir "$MISSION_ID")
 mkdir -p "$M_DIR"
 FINDINGS_PATH="$M_DIR/findings.md"
+DONE_SCRIPT="$HERE/ferret-done.sh"
 
 # Use the mission dir as the cwd so we can inject .claude/agents without
 # touching any registered repo. All search roots are passed via the settings
@@ -86,11 +87,12 @@ PROMPT=$(cat <<EOF
 Mission: $MISSION_ID
 Question: $QUESTION
 Findings path (write your answer here): $FINDINGS_PATH
+Done script (run after writing findings): $DONE_SCRIPT
 
 Search roots (read-only; passed as additional directories):
 $ROOTS_LIST
 Investigate, write a tight findings note per your role instructions,
-print "DONE" and stop.
+run "$DONE_SCRIPT $MISSION_ID", print "DONE" and stop.
 EOF
 )
 

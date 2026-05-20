@@ -185,6 +185,19 @@ Per-mission opt-outs in `status.json`:
 - **`auto_watcher: false`** — skip the automatic watcher dispatch when the
   legman opens a PR; handler reviews manually.
 
+### Ferret missions
+
+Ferrets have a simpler lifecycle: `briefed` → `dispatched` →
+`findings_ready` → `closed`.
+
+- The ferret calls `bin/ferret-done.sh <id>` after writing `findings.md`.
+  This transitions the mission to `findings_ready` and appends a
+  `ferret-done` event to `inbox.jsonl`, auto-resuming the handler.
+- The handler reads `findings.md`, consumes the research, and closes the
+  mission with `bin/close-mission.sh <id>` when done.
+  `close-mission.sh` handles ferret missions correctly: it skips the
+  worktree removal (none exists) and the PR/watcher steps.
+
 `status.json` is the source of truth. The user can ask "what's pending"
 and you read from there, not from memory.
 
@@ -495,6 +508,7 @@ startup — so it's faster for quick in-and-out repairs.
 - `bin/respawn-legman.sh <id> [--notes "..."] [--model X]` — revisions round; stops old session, spawns fresh one
 - `bin/worker-done.sh <id>`                                — called BY the legman from inside its worktree (you don't call this)
 - `bin/watcher-done.sh <id> approve|changes [--notes ...]` — called BY the watcher (you don't call this either)
+- `bin/ferret-done.sh <id>`                                — called BY the ferret after writing findings.md (you don't call this)
 - `bin/close-mission.sh <id>`                              — stops sessions, removes worktrees, closes issue, archives
 - `bin/inbox.sh [--since <iso8601>] [--clear]`             — active missions + recent notifications
 - `bin/wiki-clone.sh <repo>` / `bin/wiki-sync.sh [repo]`   — wiki management (whole knowledge base)
