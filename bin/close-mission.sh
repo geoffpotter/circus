@@ -19,6 +19,8 @@ WORKTREE=$(jq -r '.worktree // ""' "$STATUS_FILE")
 WATCHER_WORKTREE=$(jq -r '.watcher_worktree // ""' "$STATUS_FILE")
 SESSION_ID=$(jq -r '.session_id // ""' "$STATUS_FILE")
 WATCHER_SESSION_ID=$(jq -r '.watcher_session_id // ""' "$STATUS_FILE")
+SESSION_NAME=$(jq -r '.session_name // ""' "$STATUS_FILE")
+WATCHER_SESSION_NAME=$(jq -r '.watcher_session_name // ""' "$STATUS_FILE")
 REPO=$(jq -r '.repo // ""' "$STATUS_FILE")
 REPO_PATH=""
 [[ -n "$REPO" && "$REPO" != "(ferret)" ]] && REPO_PATH=$(repo_path "$REPO")
@@ -30,6 +32,23 @@ stop_session() {
     claude stop "$s" 2>/dev/null || true
     claude rm "$s" 2>/dev/null || true
   fi
+}
+
+stop_session_by_name() {
+  local name="$1"
+  [[ -n "$name" && "$name" != "null" ]] || return 0
+  command -v claude >/dev/null 2>&1 || return 0
+  local ids
+  ids=$(claude agents --json 2>/dev/null \
+    | jq -r --arg n "$name" '.[] | select(.name == $n) | .sessionId' \
+    | head -20)
+  [[ -n "$ids" ]] || return 0
+  while IFS= read -r sid; do
+    [[ -n "$sid" ]] || continue
+    log "stopping background session by name ($name → $sid)"
+    claude stop "$sid" 2>/dev/null || true
+    claude rm "$sid" 2>/dev/null || true
+  done <<<"$ids"
 }
 
 remove_worktree() {
@@ -46,6 +65,8 @@ remove_worktree() {
 
 stop_session "$SESSION_ID"
 stop_session "$WATCHER_SESSION_ID"
+stop_session_by_name "$SESSION_NAME"
+stop_session_by_name "$WATCHER_SESSION_NAME"
 remove_worktree "$WORKTREE"
 remove_worktree "$WATCHER_WORKTREE"
 
