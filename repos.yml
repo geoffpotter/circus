@@ -9,8 +9,17 @@
 #   worktree_root:  $CIRCUS_ROOT/worktrees  (shared)
 #   default_branch: main
 #   issues_mode:    local                   (don't create GH issues)
-#   wiki:           false                   (don't sync wiki)
+#   wiki:           false                   (don't sync wiki knowledge base)
+#   status_wiki:    off                     (don't push status page to wiki)
 #   nwo:            inferred from origin remote
+#
+# wiki vs. status_wiki:
+#   - wiki: true       — bin/wiki-sync.sh pulls+pushes the whole wiki
+#                        (knowledge base: patterns, gotchas, history)
+#   - status_wiki: on  — bin/status-sync.sh pushes ONLY
+#                        meta/repo-status/<name>.md → wikis/<name>/Status.md.
+#                        Local-first; the source of truth lives in circus.
+#                        The two flags are independent.
 #
 # Registration is normally done via bin/add-repo.sh <url>, not by hand.
 # `repos:` is kept LAST in this file so add-repo.sh can append safely.

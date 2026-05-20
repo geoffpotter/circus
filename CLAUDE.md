@@ -171,6 +171,56 @@ A mission moves through these states (tracked in `status.json`):
 `status.json` is the source of truth. The user can ask "what's pending"
 and you read from there, not from memory.
 
+## Sub-agent dispatch policy
+
+Default to background. The handler should be idle most of the time so
+the user can chat or steer other workstreams while work happens.
+
+Two mechanisms; pick by lifetime:
+
+- **In-session sub-agent (`Agent` tool)** — short-lived, lives inside
+  the current handler turn. Use for research the handler needs to
+  inform its own next step. **Always pass `run_in_background: true`**
+  so the conversation isn't blocked; the harness emits a
+  `<task-notification>` when the sub-agent completes and the handler
+  is resumed automatically. Foreground sub-agents are reserved for the
+  one case where the answer is literally the next thing the handler is
+  about to say to the user.
+
+- **Background mission (`bin/spawn-*.sh`)** — a full separate
+  `claude --bg` session with its own conversation, lifecycle, and
+  mission state. Use for anything substantial enough to be a mission,
+  anything the user might want to steer mid-flight, anything whose
+  lifetime should exceed the current handler turn. Workers report via
+  `inbox.jsonl`; the handler reads on its next turn.
+
+Block on a sub-agent only when blocking is the entire point.
+
+## Auto-resume between turns
+
+The handler is not auto-woken when an external file changes. To stay
+responsive while missions run in the background, two complementary
+tools:
+
+- **`Monitor`** (deferred tool) — within a single handler turn, tail
+  `inbox.jsonl` and react to lines as they arrive. Right when the
+  handler is already mid-task and wants to drain events as they land.
+
+- **`/loop`** with a dynamic delay — the handler self-schedules a
+  wake-up via `ScheduleWakeup`. Use for "check the inbox every ~20
+  minutes while idle" patterns. Cache-aware: stay under 270 s to keep
+  the prompt cache warm, or commit to 1200 s+ to amortize a cache
+  miss. Avoid 5 min — worst of both worlds.
+
+`PushNotification` reaches the user, not the handler — fine for
+"escalate to human" but doesn't resume the handler.
+
+Direct inter-session messaging (worker → handler) does **not** exist
+yet for standalone `claude --bg` sessions. The agent-teams experimental
+flag (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) has a `SendMessage`
+primitive, but session resumption with in-process teammates is still
+broken — park until the flag drops. See the "Planned" section.
+
 ## Spawning workers
 
 Workers are Claude Code **background sessions** (`claude --bg`), each
@@ -363,7 +413,8 @@ Don't delete archives.
 - `bin/watcher-done.sh <id> approve|changes [--notes ...]` — called BY the watcher (you don't call this either)
 - `bin/close-mission.sh <id>`                              — stops sessions, removes worktrees, closes issue, archives
 - `bin/inbox.sh [--since <iso8601>] [--clear]`             — active missions + recent notifications
-- `bin/wiki-clone.sh <repo>` / `bin/wiki-sync.sh [repo]`   — wiki management
+- `bin/wiki-clone.sh <repo>` / `bin/wiki-sync.sh [repo]`   — wiki management (whole knowledge base)
+- `bin/status-sync.sh [repo]`                              — push meta/repo-status/<name>.md → <name>.wiki/Status.md (status_wiki: on)
 
 ### Claude Code session management
 
@@ -420,6 +471,28 @@ read the wiki when their brief points at a page.
 
 `bin/wiki-sync.sh` pulls+pushes every wiki marked `wiki: true` in
 repos.yml. Run it occasionally; it's not automatic.
+
+## Per-repo status pages
+
+Each owned repo has a **status page** that captures "where are we right
+now" — current state, in-flight missions, known issues, recent
+changes, roadmap. The handler owns these pages.
+
+- **Source of truth**: `meta/repo-status/<name>.md` (lives in circus,
+  so the handler edits directly — Rule 1 holds).
+- **Optional wiki sync**: if `status_wiki: on` in repos.yml,
+  `bin/status-sync.sh` pushes the local page to the repo's GitHub
+  wiki at `Status.md`. Push-only. Separate from `wiki:`-driven
+  full-wiki sync.
+- **Update cadence**: whenever the handler does anything that
+  materially changes the state of a repo — merging a mission,
+  closing a mission, capturing maps, dropping a deprecated subsystem
+  — refresh the page. After editing, run `bin/status-sync.sh <repo>`
+  if `status_wiki: on`.
+- **For workers**: the brief should cite the status page so the
+  worker reads it on its own. If a mission lands a material state
+  change, the legman notes the delta in the PR description; the
+  handler folds it into the page when merging.
 
 ## Disambiguating user requests
 
