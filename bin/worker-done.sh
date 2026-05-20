@@ -80,3 +80,37 @@ mission:  $MISSION_ID
 state:    awaiting_review
 pr:       $PR_URL
 EOF
+
+# Auto-watcher: spawn unless this mission has auto_watcher: false.
+AUTO_WATCHER=$(jq -r '.auto_watcher // true' "$STATUS_FILE")
+if [[ "$AUTO_WATCHER" == "false" ]]; then
+  log "auto_watcher disabled for this mission; skipping automatic watcher dispatch"
+else
+  REPO_NWO=$(repo_nwo "$REPO")
+
+  # Diff-size tier: count changed lines in the PR.
+  DIFF_LINES=$(gh pr diff "$PR_NUMBER" ${REPO_NWO:+--repo "$REPO_NWO"} 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+  DIFF_LINES="${DIFF_LINES:-0}"
+  if [[ "$DIFF_LINES" -lt 200 ]]; then DIFF_TIER="haiku"
+  elif [[ "$DIFF_LINES" -le 800 ]]; then DIFF_TIER="sonnet"
+  else DIFF_TIER="opus"
+  fi
+
+  # Difficulty tier written by the legman into status.json before this call.
+  DIFFICULTY=$(jq -r '.difficulty // "medium"' "$STATUS_FILE")
+  case "$DIFFICULTY" in
+    easy) DIFF_TIER2="haiku";;
+    hard) DIFF_TIER2="opus";;
+    *)    DIFF_TIER2="sonnet";;
+  esac
+
+  # Final model = max(diff-tier, difficulty-tier): haiku(1) < sonnet(2) < opus(3).
+  _tier() { case "$1" in haiku) echo 1;; opus) echo 3;; *) echo 2;; esac; }
+  V1=$(_tier "$DIFF_TIER"); V2=$(_tier "$DIFF_TIER2")
+  WATCHER_MODEL="$DIFF_TIER"
+  [[ "$V2" -gt "$V1" ]] && WATCHER_MODEL="$DIFF_TIER2"
+
+  log "auto-dispatching watcher (diff=$DIFF_LINES lines, difficulty=${DIFFICULTY:-unset}, model=$WATCHER_MODEL)"
+  "$HERE/spawn-watcher.sh" "$MISSION_ID" --model "$WATCHER_MODEL"
+  notify_handler "$MISSION_ID" "watcher-spawned" "auto-watcher dispatched (model=$WATCHER_MODEL, diff=$DIFF_LINES lines)"
+fi

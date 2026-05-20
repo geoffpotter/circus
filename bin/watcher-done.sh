@@ -73,8 +73,38 @@ REVIEW_FILE="$(mission_dir "$MISSION_ID")/review.md"
 } > "$REVIEW_FILE"
 
 OUTCOME=""
+CLOSE_OWNED=false
+AUTO_RESPAWN=false
+
 case "$VERDICT" in
   approve)
+    # CI gate: block auto-merge if checks are still pending or have failed.
+    CHECKS_JSON=$(gh pr checks "$PR_NUMBER" ${REPO_NWO:+--repo "$REPO_NWO"} --json name,state 2>/dev/null || echo '[]')
+    [[ -z "$CHECKS_JSON" ]] && CHECKS_JSON='[]'
+    CHECK_TOTAL=$(printf '%s' "$CHECKS_JSON" | jq 'length')
+    CHECK_PENDING=$(printf '%s' "$CHECKS_JSON" | jq \
+      '[.[] | select(.state | ascii_downcase | test("pending|queued|in_progress|waiting"))] | length')
+    CHECK_FAILED=$(printf '%s' "$CHECKS_JSON" | jq \
+      '[.[] | select(.state | ascii_downcase | test("fail|error|cancel|timed_out|action_required"))] | length')
+
+    if [[ "$CHECK_TOTAL" -gt 0 && "$CHECK_PENDING" -gt 0 ]]; then
+      status_set_state "$MISSION_ID" "awaiting_ci"
+      notify_handler "$MISSION_ID" "awaiting-ci" \
+        "$CHECK_PENDING CI check(s) still pending on PR #$PR_NUMBER — auto-merge blocked ($PR_URL)"
+      log "CI checks pending; auto-merge deferred. Re-run watcher-done.sh $MISSION_ID approve when CI completes."
+      echo "awaiting CI — $CHECK_PENDING pending check(s); re-run when CI completes"
+      exit 0
+    fi
+
+    if [[ "$CHECK_TOTAL" -gt 0 && "$CHECK_FAILED" -gt 0 ]]; then
+      status_set_state "$MISSION_ID" "ci_failed"
+      notify_handler "$MISSION_ID" "ci-failed" \
+        "$CHECK_FAILED CI check(s) failed on PR #$PR_NUMBER — needs human intervention ($PR_URL)"
+      log "CI checks failed; cannot auto-merge. Investigate and resolve, then run watcher-done.sh manually."
+      echo "CI failed — $CHECK_FAILED check(s) failed; human intervention required"
+      exit 1
+    fi
+
     log "watcher approved; squash-merging PR #$PR_NUMBER"
     GH_ARGS=( "$PR_NUMBER" --squash --delete-branch )
     [[ -n "$REPO_NWO" ]] && GH_ARGS=( --repo "$REPO_NWO" "${GH_ARGS[@]}" )
@@ -89,12 +119,14 @@ case "$VERDICT" in
       OUTCOME="approved & merged into fork main — needs user OK to publish upstream"
     else
       status_set_state "$MISSION_ID" "merged"
-      OUTCOME="approved & merged"
+      OUTCOME="approved & merged; auto-closing mission"
+      CLOSE_OWNED=true
     fi
     ;;
   changes)
     status_set_state "$MISSION_ID" "revisions"
-    OUTCOME="changes requested — handler should respawn legman: bin/respawn-legman.sh $MISSION_ID"
+    OUTCOME="changes requested; auto-respawning legman"
+    AUTO_RESPAWN=true
     ;;
 esac
 
@@ -102,3 +134,17 @@ KIND="review-${VERDICT}"
 notify_handler "$MISSION_ID" "$KIND" "$OUTCOME  ($PR_URL)"
 
 echo "$OUTCOME"
+
+# Auto-respawn legman after all output is done (changes verdict).
+if [[ "$AUTO_RESPAWN" == "true" ]]; then
+  log "auto-respawning legman for revisions"
+  "$HERE/respawn-legman.sh" "$MISSION_ID" \
+    || log "WARNING: respawn-legman.sh failed — respawn manually: bin/respawn-legman.sh $MISSION_ID"
+fi
+
+# Auto-close owned missions after all output is done (approve verdict, owned repo).
+if [[ "$CLOSE_OWNED" == "true" ]]; then
+  log "auto-closing mission $MISSION_ID"
+  "$HERE/close-mission.sh" "$MISSION_ID" \
+    || log "WARNING: close-mission.sh failed — close manually: bin/close-mission.sh $MISSION_ID"
+fi

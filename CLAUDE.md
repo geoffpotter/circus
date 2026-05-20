@@ -67,8 +67,12 @@ Use these names naturally in conversation. Don't over-perform the theme.
    config allows that pattern) and opening any PR against an upstream main.
    Pushes to owned repos and to the user's own forks are automatic.
    See *Push patterns* below for the two supported contributor flows.
-6. **Do not babysit silently.** If a mission has been idle more than ~15
-   minutes with no progress signal, check on it.
+6. **Do not babysit silently.** The chain now auto-progresses through
+   PR-open → watcher-dispatch → merge → close. Reserve active checks for
+   missions that should have auto-progressed but haven't (stuck >15 min
+   with no inbox event when a transition was expected). Fire
+   `PushNotification` for genuine blocks; don't escalate normal chain
+   progress (pr-ready, watcher-spawned, merged, closed) to the user.
 
 ## Repo taxonomy
 
@@ -155,22 +159,31 @@ A mission moves through these states (tracked in `status.json`):
 2. **dispatched** — legman running as `claude --bg` session (name = mission id)
 3. **awaiting_review** — legman pushed a branch and opened a PR
    (against the repo's main for owned; against the fork's main for
-   contributor)
+   contributor). Auto-watcher is dispatched at this point unless
+   `auto_watcher: false` is set on the mission.
 4. **in_review** — watcher (or you) is reviewing
-5. **revisions** — review notes sent back to the legman; returns to **in_review**
-6. **merged** — reviewer merged the PR with `--squash`. For owned repos
-   this is the final merge to main. For contributor repos this is the
-   fork-internal merge into the fork's main.
-7. **awaiting_upstream_approval** *(contributor only)* — mission pauses;
+5. **revisions** — changes requested; legman auto-respawns to address them,
+   then returns to **awaiting_review** (watcher auto-dispatched again)
+6. **awaiting_ci** — watcher approved but CI checks are still pending;
+   auto-merge blocked until CI completes (re-run `watcher-done.sh approve`)
+7. **ci_failed** — CI checks failed; needs human intervention
+8. **merged** — reviewer merged the PR with `--squash`. For owned repos
+   this is the final merge to main; `close-mission.sh` auto-runs.
+   For contributor repos this is the fork-internal merge into the fork's main.
+9. **awaiting_upstream_approval** *(contributor only)* — mission pauses;
    you ask the user whether to publish upstream
-8. **upstream_pr_open** *(contributor only)* — upstream PR is live (from
-   the fork or from a branch pushed to upstream, depending on
-   `upstream_pr`). Circus's job is done; outside humans handle the
-   upstream review.
-9. **closed** — worktrees torn down, background sessions stopped, state archived to `done/`.
-   Owned missions go straight from **merged** to **closed**. Contributor
-   missions go from **upstream_pr_open** to **closed**, or directly from
-   **merged** to **closed** if the user said no to publishing upstream.
+10. **upstream_pr_open** *(contributor only)* — upstream PR is live (from
+    the fork or from a branch pushed to upstream, depending on
+    `upstream_pr`). Circus's job is done; outside humans handle the
+    upstream review.
+11. **closed** — worktrees torn down, background sessions stopped, state archived to `done/`.
+    Owned missions go straight from **merged** to **closed** (auto). Contributor
+    missions go from **upstream_pr_open** to **closed**, or directly from
+    **merged** to **closed** if the user said no to publishing upstream.
+
+Per-mission opt-outs in `status.json`:
+- **`auto_watcher: false`** — skip the automatic watcher dispatch when the
+  legman opens a PR; handler reviews manually.
 
 `status.json` is the source of truth. The user can ask "what's pending"
 and you read from there, not from memory.
@@ -200,21 +213,41 @@ Two mechanisms; pick by lifetime:
 
 Block on a sub-agent only when blocking is the entire point.
 
+## Handler bootstrap
+
+The first thing the handler does each session is start `inbox-watch.sh`
+via the `Monitor` tool:
+
+```
+Monitor("bin/inbox-watch.sh")
+```
+
+This blocks on `inbox.jsonl` and auto-resumes the handler whenever a new
+event lands (PR ready, watcher spawned, merged, CI failed, etc.). Without
+this, the handler is deaf to the auto-progressing chain for the duration of
+the session.
+
+The `UserPromptSubmit` hook (`.claude/settings.json`) provides a parallel
+drain: every time the user types a prompt, any inbox events since the last
+drain appear as `[INBOX]` lines prepended to the handler's context. This
+ensures the handler is always caught up even if the Monitor is not running.
+
 ## Auto-resume between turns
 
-The handler is not auto-woken when an external file changes. To stay
-responsive while missions run in the background, two complementary
-tools:
+Primary: **`Monitor("bin/inbox-watch.sh")`** — within a handler session,
+tails `inbox.jsonl` in real time. Each new event auto-resumes the handler
+with the event in context. Launch this at session start (see *Handler
+bootstrap* above).
 
-- **`Monitor`** (deferred tool) — within a single handler turn, tail
-  `inbox.jsonl` and react to lines as they arrive. Right when the
-  handler is already mid-task and wants to drain events as they land.
+Secondary: **`UserPromptSubmit` hook** — drains any new inbox events on
+every user prompt via `bin/inbox-drain.sh`. Catches up the handler even
+if Monitor was not running (e.g., between sessions or after Monitor ended).
 
-- **`/loop`** with a dynamic delay — the handler self-schedules a
-  wake-up via `ScheduleWakeup`. Use for "check the inbox every ~20
-  minutes while idle" patterns. Cache-aware: stay under 270 s to keep
-  the prompt cache warm, or commit to 1200 s+ to amortize a cache
-  miss. Avoid 5 min — worst of both worlds.
+Fallback: **`/loop`** with a dynamic delay — self-schedules a wake-up via
+`ScheduleWakeup` for polling cases where Monitor can't run. Cache-aware:
+stay under 270 s to keep the prompt cache warm, or commit to 1200 s+
+to amortize a cache miss. Avoid 5 min — worst of both worlds. Prefer
+Monitor for anything within an active session.
 
 `PushNotification` reaches the user, not the handler — fine for
 "escalate to human" but doesn't resume the handler.
@@ -320,31 +353,53 @@ Translate.
 
 ## PR review loop
 
-When a legman reports `awaiting_review`:
+The auto-watcher chain handles the happy path with zero handler turns:
 
-1. Glance at the diff (`gh pr diff <n>`). If small and clear, review
-   yourself with `gh pr review --approve` / `--request-changes` / `--comment`.
-2. If the diff is large or touches sensitive areas, spawn a watcher. Brief
-   the watcher with the mission brief plus the PR URL. The watcher posts
-   its review via `gh` and reports back to you.
-3. If review surfaces changes needed, **respawn the legman** via
-   `bin/respawn-legman.sh <id>` (stops old session, spawns fresh). The
-   watcher's review on the PR is what the new legman reads. Mission
-   moves to **revisions** then back to **in_review** after the legman
-   addresses them.
-4. Once the reviewer approves, merge the PR with `gh pr merge --squash` —
-   no user OK at this step. For owned repos this is the final merge to
-   main and the mission goes straight to **closed**. For contributor repos
-   this lands the work as a clean single commit on the fork's main and the
-   mission moves to **awaiting_upstream_approval**.
-5. For contributor missions, ask the user whether to publish upstream.
-   On OK, execute the publication step per `upstream_pr` in `repos.yml`
-   (see *Push patterns* above): either open a PR from fork → upstream, or
-   push the merge commit to upstream as a new branch and open the PR there.
+1. Legman opens PR → `worker-done.sh` auto-dispatches a watcher (model
+   selected by diff size + legman's self-rated difficulty).
+2. Watcher reviews → CI gate checked → squash-merge (owned: auto-close;
+   contributor: awaiting_upstream_approval).
+3. If watcher requests changes → `watcher-done.sh` auto-respawns the
+   legman → legman addresses comments → calls `worker-done.sh` again →
+   new watcher auto-dispatched.
+
+**You are the exception handler, not the coordinator.** You only step in when:
+- The `awaiting_ci` or `ci_failed` state blocks the chain
+- A contributor mission reaches `awaiting_upstream_approval`
+- The watcher has requested changes 3+ times on the same mission
+- `auto_watcher: false` was set and you need to review manually
+
+Manual overrides (when needed):
+- **Review manually:** `gh pr diff <n>` then `gh pr review --approve /
+  --request-changes / --comment`
+- **Spawn watcher manually:** `bin/spawn-watcher.sh <id> [--model X]`
+- **Respawn legman manually:** `bin/respawn-legman.sh <id>` (stops old
+  session, spawns fresh, reads PR comments directly)
+- **Merge manually:** `gh pr merge <n> --squash` then `bin/close-mission.sh <id>`
+
+For contributor missions, ask the user whether to publish upstream after
+`awaiting_upstream_approval`. On OK, execute the publication step per
+`upstream_pr` in `repos.yml` (see *Push patterns* above).
 
 The user can run `/ultrareview` on a PR if they want a heavier review —
-you cannot launch it. Suggest it if you think a PR warrants it before
-you or the watcher approve.
+you cannot launch it. Suggest it if you think a PR warrants it.
+
+## When to PushNotification
+
+Fire `PushNotification` when an inbox event reaches you that:
+
+- Blocks the chain pending a product-judgment call (e.g.,
+  `awaiting_upstream_approval`, brief-level ambiguity, scope dispute)
+- Reports `ci_failed` or an unexpected error the chain can't auto-recover from
+- Reports a watcher returning `changes` for the 3rd+ time on the same
+  mission (the legman can't get past review without human help)
+- Any `awaiting_ci` event where the CI system is known to be flaky and
+  needs human inspection before retrying
+
+Don't fire for:
+- Normal `pr-ready`, `watcher-spawned`, `merged`, `closed` events
+- `awaiting_ci` on first occurrence (just wait for CI to complete)
+- Anything where the auto-watcher chain is making forward progress
 
 ## Knowledge hierarchy
 

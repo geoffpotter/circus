@@ -37,12 +37,21 @@ before doing any work.
 4. **Test.** Run whatever the repo uses (`npm test`, `pytest`, etc.) and
    make sure your changes pass. If the repo has no tests for the area
    you're changing, write a small test that exercises your change.
-5. **Open the PR.** When done, run:
+5. **Open the PR.** Before calling worker-done.sh, set `difficulty` in
+   `status.json` to `easy`, `medium`, or `hard` based on the work you just
+   did (mechanical change = easy, normal feature = medium, complex refactor
+   or multi-file design = hard). This drives the auto-watcher's model
+   selection. Write it with:
+
+       jq '.difficulty = "medium"' "$MISSION_DIR/status.json" > /tmp/s.json && mv /tmp/s.json "$MISSION_DIR/status.json"
+
+   Then run:
 
        ~/code/circus/bin/worker-done.sh $MISSION_ID
 
    That pushes the branch, opens the PR (re-using an existing one on
-   re-run), and notifies the handler. The script is idempotent.
+   re-run), and notifies the handler. The script is idempotent and will
+   automatically dispatch a watcher.
 6. **Stop.** Your job ends after step 5. The handler or a watcher will
    review; if they want changes, a fresh you will be respawned with the
    review comments to address.

@@ -15,6 +15,7 @@ missions/
 worktrees/
 inbox.json
 inbox.jsonl
+.inbox-cursor
 
 # Registered repos & their wikis live in-tree (each their own git repo)
 repos/
