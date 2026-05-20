@@ -17,8 +17,9 @@
 #
 # Bootstraps as needed:
 #   - enables wikis on the repo via `gh api` if `has_wiki: false`
-#   - initializes the wiki on the GitHub side if cloning fails empty
 #   - clones wikis/<name>/ if missing
+#   - aborts with a clear message if the wiki has never been initialized
+#     via the web UI (GitHub only vends .wiki.git after the first page is saved)
 
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,37 +31,28 @@ usage() {
   exit 1
 }
 
-# Initialize an empty wiki: enable on GH, push a Home page if cloning empty.
+# Clone wiki if it exists on the remote; bail with a helpful message if not.
 bootstrap_wiki() {
   local name="$1" nwo="$2" wiki="$3"
 
   log "ensuring wiki is enabled on $nwo"
   gh api -X PATCH "repos/$nwo" -f has_wiki=true >/dev/null
 
-  if git ls-remote "https://github.com/$nwo.wiki.git" >/dev/null 2>&1; then
+  # Treat both a failed ls-remote AND an empty response (no refs) as
+  # "wiki not initialized" — GitHub only vends the .wiki.git endpoint
+  # after a human creates the first page via the web UI.
+  local remote_refs
+  if remote_refs=$(git ls-remote "https://github.com/$nwo.wiki.git" 2>/dev/null) \
+      && [[ -n "$remote_refs" ]]; then
     log "cloning existing wiki: $nwo.wiki.git"
     git clone "https://github.com/$nwo.wiki.git" "$wiki"
     return 0
   fi
 
-  log "wiki not initialized on GitHub — bootstrapping with Home.md"
-  mkdir -p "$wiki"
-  git init -q -b master "$wiki"
-  git -C "$wiki" remote add origin "https://github.com/$nwo.wiki.git"
-  cat > "$wiki/Home.md" <<EOF
-# ${name} wiki
-
-This wiki is managed by [circus](https://github.com/geoffpotter/circus).
-The canonical \`Status\` page is mirrored from \`meta/repo-status/${name}.md\`
-by \`bin/status-sync.sh\`.
-EOF
-  local iname iemail
-  iname=$(repo_field "$name" '.identity.name')
-  iemail=$(repo_field "$name" '.identity.email')
-  git -C "$wiki" -c "user.name=$iname" -c "user.email=$iemail" add Home.md
-  git -C "$wiki" -c "user.name=$iname" -c "user.email=$iemail" \
-    commit -q -m "circus: initialize wiki"
-  git -C "$wiki" push -u origin master
+  echo "[status-sync] wiki for $nwo is not initialized." >&2
+  echo "  Visit https://github.com/$nwo/wiki, click \"Create the first page\"," >&2
+  echo "  save any content, then re-run \`bin/status-sync.sh $name\`." >&2
+  return 1
 }
 
 sync_one() {
@@ -98,7 +90,7 @@ sync_one() {
   iemail=$(repo_field "$name" '.identity.email')
   git -C "$wiki" -c "user.name=$iname" -c "user.email=$iemail" \
     commit -q -m "circus: status sync $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  git -C "$wiki" push -q
+  git -C "$wiki" push -q -u origin HEAD
   log "$name: pushed Status.md → $nwo wiki"
 }
 
