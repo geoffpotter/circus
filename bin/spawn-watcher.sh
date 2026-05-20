@@ -57,6 +57,12 @@ else
     || git -C "$REPO_PATH" worktree add --detach "$WATCHER_WORKTREE" "$BRANCH"
 fi
 
+# Inject agent definitions so role discovery works from inside the watcher worktree.
+if [[ ! -e "$WATCHER_WORKTREE/.claude/agents" ]]; then
+  mkdir -p "$WATCHER_WORKTREE/.claude"
+  ln -sf "$CIRCUS_ROOT/.claude/agents" "$WATCHER_WORKTREE/.claude/agents"
+fi
+
 WATCHER_SESSION_NAME="${MISSION_ID}-watcher"
 status_set_state "$MISSION_ID" "in_review"
 status_set "$MISSION_ID" "watcher_session_name" "$WATCHER_SESSION_NAME"

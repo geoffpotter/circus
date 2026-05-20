@@ -53,6 +53,18 @@ remove_worktree "$WATCHER_WORKTREE"
 # usually does this on merge, but call again for missions that didn't merge.
 status_set_state "$MISSION_ID" "closed"
 status_close_issue "$MISSION_ID" "Mission closed via close-mission.sh"
+
+# Sync the status wiki page for this repo if status_wiki: on.
+# Do this before archiving so REPO is still defined from status.json.
+if [[ -n "$REPO" && "$REPO" != "(ferret)" ]]; then
+  STATUS_WIKI=$(repo_field "$REPO" '.status_wiki')
+  if [[ "$STATUS_WIKI" == "on" ]]; then
+    log "syncing status wiki for $REPO after mission close"
+    "$HERE/status-sync.sh" "$REPO" \
+      || log "WARNING: status-sync.sh failed for $REPO — sync manually"
+  fi
+fi
+
 mkdir -p "$CIRCUS_DONE_DIR"
 mv "$M_DIR" "$CIRCUS_DONE_DIR/$MISSION_ID"
 rebuild_inbox

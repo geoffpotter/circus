@@ -2,19 +2,24 @@
 *.log
 node_modules/
 
-# Local Claude state for the handler session, EXCEPT .claude/agents
-# which is a symlink to agents/ so Claude discovers subagents per-install.
+# Local Claude state for the handler session, EXCEPT:
+#   - .claude/agents         symlink to agents/ for subagent discovery
+#   - .claude/settings.json  install-wide permissions (handler is read-only)
+# Local-only overrides go in .claude/settings.local.json (still ignored).
 .claude/*
 !.claude/agents
+!.claude/settings.json
 
 # Mission state lives in-tree for greppability but isn't tracked
 missions/
 worktrees/
 inbox.json
 inbox.jsonl
+.inbox-cursor
 
 # Registered repos & their wikis live in-tree (each their own git repo)
 repos/
+references/
 wikis/
 wiki/
 

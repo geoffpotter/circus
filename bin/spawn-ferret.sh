@@ -14,7 +14,7 @@ usage() {
   cat <<'EOF' >&2
 usage: spawn-ferret.sh <roots> <question> [--model X]
   roots      Comma-separated repo names (from repos.yml) OR absolute paths.
-             First one becomes cwd; the rest are added via --add-dir.
+             All are granted read access via additionalDirectories.
   question   Research question (free text).
   --model    Default: haiku
 EOF
@@ -45,12 +45,19 @@ for tok in "${TOKENS[@]}"; do
   fi
 done
 [[ "${#ROOTS[@]}" -gt 0 ]] || die "no roots resolved"
-CWD="${ROOTS[0]}"
 
 MISSION_ID=$(generate_mission_id "$QUESTION")
 M_DIR=$(mission_dir "$MISSION_ID")
 mkdir -p "$M_DIR"
 FINDINGS_PATH="$M_DIR/findings.md"
+DONE_SCRIPT="$HERE/ferret-done.sh"
+
+# Use the mission dir as the cwd so we can inject .claude/agents without
+# touching any registered repo. All search roots are passed via the settings
+# file's additionalDirectories (same mechanism the legman uses for M_DIR).
+CWD="$M_DIR"
+mkdir -p "$M_DIR/.claude"
+ln -sf "$CIRCUS_ROOT/.claude/agents" "$M_DIR/.claude/agents"
 
 # Brief = the question for audit
 {
@@ -70,7 +77,7 @@ STATUS_BLOB=$(jq -n \
     worker_type: $worker_type, repo: "(ferret)", question: $q, findings: null}')
 status_init "$MISSION_ID" "$STATUS_BLOB"
 
-# Build prompt + add-dir args
+# Build prompt
 ROOTS_LIST=""
 for r in "${ROOTS[@]}"; do
   ROOTS_LIST+="  - $r"$'\n'
@@ -80,11 +87,12 @@ PROMPT=$(cat <<EOF
 Mission: $MISSION_ID
 Question: $QUESTION
 Findings path (write your answer here): $FINDINGS_PATH
+Done script (run after writing findings): $DONE_SCRIPT
 
-Search roots (read-only; cwd is the first):
+Search roots (read-only; passed as additional directories):
 $ROOTS_LIST
 Investigate, write a tight findings note per your role instructions,
-print "DONE" and stop.
+run "$DONE_SCRIPT $MISSION_ID", print "DONE" and stop.
 EOF
 )
 
@@ -92,11 +100,12 @@ ensure_trusted "$CWD"
 for r in "${ROOTS[@]}"; do ensure_trusted "$r"; done
 
 # Persist extra dirs in a settings file (--add-dir would hang --bg on a
-# startup dialog; --settings does not).
+# startup dialog; --settings does not). cwd is the mission dir; all search
+# roots are granted via additionalDirectories.
 SETTINGS_FILE="$M_DIR/.claude-settings.json"
-EXTRA_DIRS_JSON=$(jq -n --arg m "$M_DIR" --arg cwd "$CWD" \
-  --argjson rest "$(printf '%s\n' "${ROOTS[@]:1}" | jq -R . | jq -s .)" \
-  '[$m] + [$cwd] + $rest | unique')
+EXTRA_DIRS_JSON=$(jq -n \
+  --argjson roots "$(printf '%s\n' "${ROOTS[@]}" | jq -R . | jq -s .)" \
+  '$roots | unique')
 jq -n --argjson dirs "$EXTRA_DIRS_JSON" \
   '{permissions: {additionalDirectories: $dirs}}' > "$SETTINGS_FILE"
 

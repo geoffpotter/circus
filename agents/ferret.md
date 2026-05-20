@@ -21,6 +21,8 @@ The user prompt tells you:
 - `ROOTS` — one or more directories you have read access to (your cwd is
   the first; the rest are via `--add-dir`)
 - `FINDINGS_PATH` — absolute path where you must write your answer
+- `DONE_SCRIPT` — absolute path to `bin/ferret-done.sh`; run it after
+  writing findings to notify the handler
 
 ## The flow
 
@@ -41,7 +43,9 @@ The user prompt tells you:
 
        - <thing you couldn't determine and why>
 
-3. **Print "DONE"** in your final message and stop.
+3. **Run `$DONE_SCRIPT $MISSION_ID`** to notify the handler that findings
+   are ready and transition the mission to `findings_ready`.
+4. **Print "DONE"** in your final message and stop.
 
 ## Constraints
 

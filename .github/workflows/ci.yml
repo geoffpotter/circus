@@ -87,3 +87,6 @@ jobs:
 
       - name: Collision test - unique mission ids under rapid dispatch
         run: bash tests/test-collision.sh
+
+      - name: Smoke test - publish-upstream cherry-pick + push
+        run: bash tests/smoke-publish-upstream.sh

@@ -17,13 +17,14 @@ CIRCUS_MISSIONS_DIR="$CIRCUS_ROOT/missions"
 CIRCUS_DONE_DIR="$CIRCUS_ROOT/missions/done"
 CIRCUS_WORKTREES_DIR="$CIRCUS_ROOT/worktrees"
 CIRCUS_REPOS_DIR="$CIRCUS_ROOT/repos"
+CIRCUS_REFERENCES_DIR="$CIRCUS_ROOT/references"
 CIRCUS_WIKIS_DIR="$CIRCUS_ROOT/wikis"
 CIRCUS_INBOX="$CIRCUS_ROOT/inbox.json"
 CIRCUS_INBOX_LOG="$CIRCUS_ROOT/inbox.jsonl"
 CIRCUS_REPOS_YML="$CIRCUS_ROOT/repos.yml"
 
 # Ensure state dirs exist on import.
-mkdir -p "$CIRCUS_MISSIONS_DIR" "$CIRCUS_DONE_DIR" "$CIRCUS_WORKTREES_DIR" "$CIRCUS_REPOS_DIR" "$CIRCUS_WIKIS_DIR"
+mkdir -p "$CIRCUS_MISSIONS_DIR" "$CIRCUS_DONE_DIR" "$CIRCUS_WORKTREES_DIR" "$CIRCUS_REPOS_DIR" "$CIRCUS_REFERENCES_DIR" "$CIRCUS_WIKIS_DIR"
 [[ -f "$CIRCUS_INBOX" ]] || echo '{"missions":[]}' > "$CIRCUS_INBOX"
 [[ -f "$CIRCUS_INBOX_LOG" ]] || : > "$CIRCUS_INBOX_LOG"
 
@@ -75,14 +76,21 @@ repo_field() {
   yq -r ".repos[] | select(.name == \"$name\") | $path // \"\"" "$CIRCUS_REPOS_YML"
 }
 
-# Repo's working checkout path. Defaults to $CIRCUS_REPOS_DIR/<name> if not
-# explicitly set in repos.yml.
+# Repo's working checkout path. Defaults to $CIRCUS_REFERENCES_DIR/<name> for
+# reference repos, $CIRCUS_REPOS_DIR/<name> for everything else. An explicit
+# path: in repos.yml always wins.
 repo_path() {
   local name="$1"
   local p
   p=$(repo_field "$name" '.path')
   if [[ -z "$p" || "$p" == "null" ]]; then
-    p="$CIRCUS_REPOS_DIR/$name"
+    local cat
+    cat=$(repo_field "$name" '.category')
+    if [[ "$cat" == "reference" ]]; then
+      p="$CIRCUS_REFERENCES_DIR/$name"
+    else
+      p="$CIRCUS_REPOS_DIR/$name"
+    fi
   fi
   printf '%s' "$p"
 }
