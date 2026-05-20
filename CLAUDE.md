@@ -375,7 +375,7 @@ Manual overrides (when needed):
 - **Spawn watcher manually:** `bin/spawn-watcher.sh <id> [--model X]`
 - **Respawn legman manually:** `bin/respawn-legman.sh <id>` (stops old
   session, spawns fresh, reads PR comments directly)
-- **Merge manually:** `gh pr merge <n> --squash` then `bin/close-mission.sh <id>`
+- **Merge manually:** `gh pr merge <n> --squash` then `bin/close-mission.sh <id>` — after manual merge, also `git -C <repo> pull --ff-only origin <default-branch>` to keep the local checkout in sync (auto-merge does this for you).
 
 For contributor missions, ask the user whether to publish upstream after
 `awaiting_upstream_approval`. On OK, execute the publication step per

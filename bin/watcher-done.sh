@@ -114,6 +114,18 @@ case "$VERDICT" in
       [[ "$PR_STATE" == "MERGED" ]] || die "merge failed"
       log "PR was already merged; continuing"
     fi
+
+    # Pull the local checkout to match remote after merge. On failure, log
+    # the error to inbox but don't abort — the merge succeeded on the remote.
+    DEFAULT_BRANCH=$(repo_field "$REPO" '.default_branch')
+    [[ -z "$DEFAULT_BRANCH" || "$DEFAULT_BRANCH" == "null" ]] && DEFAULT_BRANCH="main"
+    pull_output=$(git fetch origin "$DEFAULT_BRANCH" 2>&1 && \
+                  git pull --ff-only origin "$DEFAULT_BRANCH" 2>&1) || {
+      log "WARNING: pull after merge failed"
+      notify_handler "$MISSION_ID" "pull-failed" \
+        "After merge, failed to pull local $DEFAULT_BRANCH to match remote: $pull_output"
+    }
+
     if [[ "$CATEGORY" == "contributor" ]]; then
       status_set_state "$MISSION_ID" "awaiting_upstream_approval"
       OUTCOME="approved & merged into fork main — needs user OK to publish upstream"
