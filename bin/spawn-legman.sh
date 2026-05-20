@@ -19,10 +19,11 @@ source "$HERE/_lib.sh"
 
 usage() {
   cat <<'EOF' >&2
-usage: spawn-legman.sh <repo> <brief-path> [--model X]
+usage: spawn-legman.sh <repo> <brief-path> [--model X] [--force]
   repo         Name of the repo as registered in repos.yml
   brief-path   Path to a markdown file describing the mission
   --model X    Claude model (default: claude-sonnet-4-6)
+  --force      Skip the local/origin drift check (use only after reconciling manually)
 EOF
   exit 1
 }
@@ -30,9 +31,11 @@ EOF
 [[ $# -ge 2 ]] || usage
 REPO="$1"; BRIEF_SRC="$2"; shift 2
 MODEL="claude-sonnet-4-6"
+FORCE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model) MODEL="$2"; shift 2;;
+    --force) FORCE=1; shift;;
     *) usage;;
   esac
 done
@@ -49,6 +52,26 @@ ISSUES_MODE=$(repo_field "$REPO" '.issues_mode')
 
 [[ "$CATEGORY" == "reference" ]] && die "cannot spawn a legman on a reference repo: $REPO"
 [[ -d "$REPO_PATH" ]] || die "repo path missing on disk: $REPO_PATH"
+
+# Pre-spawn drift guard: abort if local default branch diverges from origin.
+# Prevents PRs with thousands of lines of spurious diff.
+if [[ "$FORCE" -eq 0 ]]; then
+  git -C "$REPO_PATH" fetch origin --quiet 2>/dev/null || true
+  DRIFT=$(git -C "$REPO_PATH" rev-list --left-right --count "${DEFAULT_BRANCH}...origin/${DEFAULT_BRANCH}" 2>/dev/null || echo "0	0")
+  DRIFT_AHEAD=$(printf '%s' "$DRIFT" | awk '{print $1}')
+  DRIFT_BEHIND=$(printf '%s' "$DRIFT" | awk '{print $2}')
+  if [[ "$DRIFT_BEHIND" -gt 0 || "$DRIFT_AHEAD" -gt 5 ]]; then
+    printf '[circus] ABORT: local %s/%s is %s ahead, %s behind origin/%s.\n' \
+      "$REPO" "$DEFAULT_BRANCH" "$DRIFT_AHEAD" "$DRIFT_BEHIND" "$DEFAULT_BRANCH" >&2
+    printf '        PRs spawned from this state will have spurious diffs and may not be mergeable.\n' >&2
+    printf '        Reconcile: cd %s && git fetch && git status, then either\n' "$REPO_PATH" >&2
+    printf '          git pull --rebase origin %s  (preserve local commits)\n' "$DEFAULT_BRANCH" >&2
+    printf '          git reset --hard origin/%s   (DESTRUCTIVE — discards local commits)\n' "$DEFAULT_BRANCH" >&2
+    printf '        Re-run spawn-legman.sh after reconciling.\n' >&2
+    printf '        Or use --force to skip this check.\n' >&2
+    exit 1
+  fi
+fi
 
 # Mission id from brief title
 BRIEF_TITLE=$(head -n 1 "$BRIEF_SRC" | sed -E 's/^#+ *//')

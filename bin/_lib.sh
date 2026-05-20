@@ -31,7 +31,7 @@ log() { printf '[circus] %s\n' "$*" >&2; }
 die() { printf '[circus][error] %s\n' "$*" >&2; exit 1; }
 
 now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
-now_id_stamp() { date +"%y%m%d-%H%M"; }
+now_id_stamp() { date +"%y%m%d-%H%M%S"; }
 
 # slugify "Fix the foo bar" -> "fix-the-foo-bar"
 slugify() {
@@ -42,12 +42,23 @@ slugify() {
     | sed -E 's/-+$//'
 }
 
-# generate_mission_id "fix bug in reverse" -> "260517-0114-fix-bug-in-reverse"
+# generate_mission_id "fix bug in reverse" -> "260517-011423-fix-bug-in-reverse"
+# Creates the mission directory as a lock so concurrent calls in the same second
+# get unique ids (-1, -2, ...).
 generate_mission_id() {
   local slug
   slug=$(slugify "$1")
   [[ -n "$slug" ]] || slug="mission"
-  printf '%s-%s' "$(now_id_stamp)" "$slug"
+  local base_id
+  base_id="$(now_id_stamp)-${slug}"
+  local id="$base_id"
+  local n=0
+  while [[ -d "$CIRCUS_MISSIONS_DIR/$id" ]]; do
+    n=$(( n + 1 ))
+    id="${base_id}-${n}"
+  done
+  mkdir -p "$CIRCUS_MISSIONS_DIR/$id"
+  printf '%s' "$id"
 }
 
 # Mission paths

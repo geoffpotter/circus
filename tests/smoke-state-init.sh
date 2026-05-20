@@ -14,7 +14,7 @@ CIRCUS_REPOS_YML="$HERE/repos.yml"
 
 # generate_mission_id: shape check
 id=$(generate_mission_id "smoke test")
-[[ "$id" =~ ^[0-9]{6}-[0-9]{4}-.+$ ]] || { echo "bad id: $id"; exit 1; }
+[[ "$id" =~ ^[0-9]{6}-[0-9]{6}-.+$ ]] || { echo "bad id: $id"; exit 1; }
 
 # status_init creates a valid JSON file
 status_init "$id" '{"hello":"world"}'

@@ -84,3 +84,6 @@ jobs:
 
       - name: Smoke test - state machine init
         run: bash tests/smoke-state-init.sh
+
+      - name: Collision test - unique mission ids under rapid dispatch
+        run: bash tests/test-collision.sh
