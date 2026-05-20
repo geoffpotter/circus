@@ -15,5 +15,5 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/_lib.sh"
 
 exec tail -F -n 0 "$CIRCUS_INBOX_LOG" \
-  | jq -rc 'select(.kind != null) |
+  | jq -rc --unbuffered 'select(.kind != null) |
             "[\(.kind)] \(.mission // "?") — \(.message // "")"'
