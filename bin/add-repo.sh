@@ -5,7 +5,8 @@
 #             [--upstream-pr from_fork|branch_on_upstream] \
 #             [--upstream-url <url>]
 #
-# Clones a GitHub repo into $CIRCUS_ROOT/repos/<name>/, tries to clone the
+# Clones a GitHub repo into $CIRCUS_ROOT/repos/<name>/ (owned/contributor) or
+# $CIRCUS_ROOT/references/<name>/ (reference), tries to clone the
 # wiki into $CIRCUS_ROOT/wikis/<name>/ if the wiki is enabled, then appends
 # a stub entry to repos.yml. Does NOT change any GitHub settings.
 #
@@ -89,7 +90,11 @@ if [[ "$LAST_TOP" != "repos" ]]; then
   die "repos.yml invariant broken: last top-level key is '$LAST_TOP', need 'repos'. Fix the file (move 'repos:' to the bottom) and re-run."
 fi
 
-DEST="$CIRCUS_REPOS_DIR/$NAME"
+if [[ "$CATEGORY" == "reference" ]]; then
+  DEST="$CIRCUS_REFERENCES_DIR/$NAME"
+else
+  DEST="$CIRCUS_REPOS_DIR/$NAME"
+fi
 [[ -e "$DEST" ]] && die "destination already exists: $DEST"
 
 log "cloning $CLONE_URL -> $DEST"

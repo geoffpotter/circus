@@ -15,9 +15,11 @@ multi-repo dispatch, mission state machine, GitHub-native workflow
 (issue mirroring, PR review loop, contributor push patterns), and the
 unified `~/code/circus/` filesystem layout.
 
-Every registered repo lives under `~/code/circus/repos/<name>/`, every
-worktree under `~/code/circus/worktrees/<mission-id>/`, every cloned wiki
-under `~/code/circus/wikis/<name>/`. The whole world is greppable from
+Owned and contributor repos live under `~/code/circus/repos/<name>/`;
+reference repos (read-only, ferret-only) live under
+`~/code/circus/references/<name>/`. Every worktree under
+`~/code/circus/worktrees/<mission-id>/`, every cloned wiki under
+`~/code/circus/wikis/<name>/`. The whole world is greppable from
 `~/code/circus/`.
 
 You don't need a tmux session for yourself — workers don't inject text
@@ -441,7 +443,8 @@ bits (missions, worktrees, repos, wikis, inbox) out of the tracked tree.
   bin/            agents/         CLAUDE.md           repos.yml        (tracked)
   meta/contexts/  meta/subjects/                                       (tracked)
 
-  repos/<name>/                   # cloned repo (the working checkout)
+  repos/<name>/                   # owned + contributor checkouts
+  references/<name>/              # reference (read-only) checkouts
   worktrees/<mission-id>/         # per-mission branch checkouts
   wikis/<name>/                   # cloned <repo>.wiki.git
   wiki/                           # circus's own wiki
@@ -501,7 +504,7 @@ startup — so it's faster for quick in-and-out repairs.
 ### Circus scripts (bin/)
 
 - `bin/circus`                                              — start a handler session (`claude --agent=handler`); alias this or add to PATH
-- `bin/add-repo.sh <url> [--category X] [--issues-mode Y]` — register a new repo, clone it into `repos/<name>/`, auto-clone its wiki if enabled
+- `bin/add-repo.sh <url> [--category X] [--issues-mode Y]` — register a new repo, clone it into `repos/<name>/` (owned/contributor) or `references/<name>/` (reference), auto-clone its wiki if enabled
 - `bin/spawn-legman.sh <repo> <brief-path> [--model X]`   — dispatch a legman as `claude --bg --agent legman`
 - `bin/spawn-watcher.sh <mission-id> [--model X]`          — dispatch a watcher on an awaiting-review mission
 - `bin/spawn-ferret.sh <roots-csv> <question> [--model X]` — dispatch a ferret to research-only roots

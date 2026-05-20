@@ -5,7 +5,8 @@
 # means and how categories drive workflow.
 #
 # Defaults (set per-entry to override):
-#   path:           $CIRCUS_ROOT/repos/<name>
+#   path:           $CIRCUS_ROOT/repos/<name>        (owned/contributor)
+#                   $CIRCUS_ROOT/references/<name>   (reference)
 #   worktree_root:  $CIRCUS_ROOT/worktrees  (shared)
 #   default_branch: main
 #   issues_mode:    local                   (don't create GH issues)

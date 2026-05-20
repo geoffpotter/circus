@@ -19,6 +19,7 @@ inbox.jsonl
 
 # Registered repos & their wikis live in-tree (each their own git repo)
 repos/
+references/
 wikis/
 wiki/
 
