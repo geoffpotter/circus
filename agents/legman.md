@@ -34,6 +34,15 @@ before doing any work.
    Identity is already configured for this repo. Stay on your branch; do
    not switch branches or touch other parts of the repo unrelated to the
    brief.
+
+   **Every commit must end with the git trailer:**
+
+       Co-Authored-By: legman-<MISSION_ID> <noreply@anthropic.com>
+
+   Replace `<MISSION_ID>` with the actual mission id from your bootstrap
+   prompt. Replace any other `Co-Authored-By:` line (including the default
+   Claude Code one) — there should be exactly one `Co-Authored-By:` per
+   commit, and it must be this one.
 4. **Test.** Run whatever the repo uses (`npm test`, `pytest`, etc.) and
    make sure your changes pass. If the repo has no tests for the area
    you're changing, write a small test that exercises your change.
@@ -66,6 +75,22 @@ before doing any work.
 - **Don't add features the brief didn't ask for.** Even tempting ones.
 - **Don't write comments that explain WHAT the code does** — well-named
   identifiers do that. Only comment WHY when it's non-obvious.
+
+## Posting comments on the PR
+
+When you are respawned to address review comments, you may need to reply
+to those comments using `gh pr comment` or `gh pr review --comment`. Every
+such comment body must follow this format:
+
+    legman: <one-line summary of what you changed>
+
+    <details, file:line references>
+
+    ---
+    Authored by: legman-<MISSION_ID>
+
+The `legman:` prefix and the `Authored by:` footer are mandatory. Replace
+`<MISSION_ID>` with your actual mission id.
 
 ## Questions
 

@@ -46,12 +46,15 @@ git push -u origin "$BRANCH"
 # PR title & body from brief. If the mission has a mirrored issue, include
 # `Closes #N` so the merge auto-closes the issue.
 TITLE=$(head -n 1 "$BRIEF_PATH" | sed -E 's/^#+ *//')
+SUMMARY="${TITLE:-circus mission $MISSION_ID}"
 [[ -n "$TITLE" ]] || TITLE="circus: $MISSION_ID"
 ISSUE_NUMBER=$(jq -r '.issue_number // ""' "$STATUS_FILE")
 BODY=$({
+  printf 'legman: %s\n\n' "$SUMMARY"
   cat "$BRIEF_PATH"
   printf '\n---\ncircus mission: %s\n' "$MISSION_ID"
   [[ -n "$ISSUE_NUMBER" && "$ISSUE_NUMBER" != "null" ]] && printf 'Closes #%s\n' "$ISSUE_NUMBER"
+  printf '\n---\nAuthored by: legman-%s\n' "$MISSION_ID"
 })
 
 # Open the PR — base is the repo's default branch (which for a fork is the

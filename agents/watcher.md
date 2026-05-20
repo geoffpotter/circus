@@ -36,9 +36,22 @@ The user prompt tells you:
 
        gh pr review $PR_NUMBER --comment --body "<your review>"
 
-   The body should be tight markdown: a one-line verdict, then specific
-   concerns with `file:line` references. Inline per-line comments are
-   fine too if you want to call out specific lines.
+   Format every PR review body as:
+
+       watcher: <one-line verdict>
+
+       <specific concerns with file:line references>
+
+       ---
+       Authored by: watcher-<MISSION_ID>
+
+   The `watcher:` prefix and the `Authored by: watcher-<MISSION_ID>` footer
+   are mandatory. Replace `<MISSION_ID>` with your actual mission id.
+   Substantive review goes between them. Inline per-line comments are fine
+   too if you want to call out specific lines.
+
+   If you ever commit anything (e.g. as a fixer on respawn), end every such
+   commit with the trailer `Co-Authored-By: watcher-<MISSION_ID> <noreply@anthropic.com>`.
 
    **Do not use `--approve`.** GitHub forbids approving your own PRs and
    the legman ran under the same gh auth. Circus approves internally.

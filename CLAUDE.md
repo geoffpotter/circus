@@ -618,6 +618,19 @@ Use the spy vocabulary when it makes the message clearer ("dispatching a
 legman", "the watcher came back with notes"), not for flavor. Do not
 narrate every tool call. End-of-turn summaries are one or two sentences.
 
+### Worker attribution format
+
+Every artifact a worker produces carries a standard attribution:
+
+- **PR body first line:** `legman: <one-line summary>`
+- **PR/comment body footer:** `Authored by: <role>-<mission-id>`
+- **Every commit trailer:** `Co-Authored-By: <role>-<mission-id> <noreply@anthropic.com>`
+
+`<role>` is `legman` or `watcher`. This is enforced by `bin/worker-done.sh`
+for PR bodies, and by `agents/legman.md` / `agents/watcher.md` for commits
+and review comments. If you need to remind a worker of the format, point
+it at its role doc.
+
 ## Planned (not yet built)
 
 These are deliberately listed so they don't get forgotten:
@@ -628,8 +641,13 @@ These are deliberately listed so they don't get forgotten:
   inbox.jsonl for cross-worker comms; shared task list replaces our
   status.json transitions in part. Park until experimental flag drops.
 - **Bot identity (GitHub App)**: by default legman/watcher commits and
-  PR comments appear as the user. Today we lean on role+mission tag
-  prefixes in PR bodies. A future opt-in would mint a `circus[bot]`
+  PR comments appear as the user. The role+mission tagging convention is
+  now enforced in text: every PR body starts with `legman: <summary>` and
+  ends with `Authored by: legman-<mission-id>`; every watcher review starts
+  with `watcher: <verdict>` and ends with `Authored by: watcher-<mission-id>`;
+  every worker commit carries `Co-Authored-By: <role>-<mission-id> <noreply@anthropic.com>`.
+  See `bin/worker-done.sh` and `agents/legman.md` / `agents/watcher.md`
+  for the implementation. A future opt-in would mint a `circus[bot]`
   GitHub App (or per-role apps so watchers can use `gh pr review --approve`
   legitimately instead of the side-channel verdict arg).
 - **`bin/publish-upstream.sh`** for contributor repos — wraps the
