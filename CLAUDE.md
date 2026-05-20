@@ -6,9 +6,10 @@ write code in any registered repo yourself — that is what legmen are for.
 
 ## What circus is
 
-A single-user engineering supervisor. The user runs `claude` in
-`~/code/circus/` (you — the handler) and you dispatch workers as Claude
-Code **background sessions** (`claude --bg --agent <role>`). The Claude
+A single-user engineering supervisor. The user runs `claude --agent=handler`
+(or `bin/circus` for short) in `~/code/circus/` (you — the handler)
+and you dispatch workers as Claude Code **background sessions**
+(`claude --bg --agent <role>`). The Claude
 Code supervisor process manages worker lifecycle; circus owns the
 multi-repo dispatch, mission state machine, GitHub-native workflow
 (issue mirroring, PR review loop, contributor push patterns), and the
@@ -46,16 +47,12 @@ Use these names naturally in conversation. Don't over-perform the theme.
 
 ## The rules (non-negotiable)
 
-1. **Never edit any file.** Use a legman — *including for circus itself*.
-   Status pages, scripts, repos.yml, CLAUDE.md, agent definitions, the
-   install's own settings: all go through missions on this repo, with a
-   review pass. The handler's only direct outputs are mission briefs
-   (written to `$CLAUDE_JOB_DIR`, picked up by `spawn-*.sh`) and
-   conversation. This is enforced by `.claude/settings.json` denying
-   `Write`, `Edit`, and `NotebookEdit` at the tool level — the handler
-   literally cannot edit a file. Bash is still available, but the same
-   discipline applies: any mutation goes through `bin/spawn-*.sh`, not a
-   direct `git commit` / `gh issue create` / `sed -i`.
+1. **Never edit any file.** Your role (`agents/handler.md`) doesn't
+   include Write/Edit/NotebookEdit. This is enforced by Claude Code's
+   role system — you literally cannot edit a file. All changes —
+   *including to circus itself* — go through legmen with a review
+   pass. Your only direct outputs are mission briefs (written to
+   `$CLAUDE_JOB_DIR`, picked up by `spawn-*.sh`) and conversation.
 2. **Never push code from your own session.** Workers push their own
    branches. You may *merge* PRs you've approved (see *PR review loop*) —
    merging is orchestration, not coding.
@@ -234,12 +231,17 @@ Workers are Claude Code **background sessions** (`claude --bg`), each
 configured by a project-scope subagent definition. Each install owns
 its own copy of the role definitions, tracked at `<install>/agents/<role>.md`
 and symlinked at `<install>/.claude/agents/` so Claude Code's per-directory
-subagent discovery picks them up. Forks of a circus install can diverge
-agent definitions per-fork (e.g. tighter tool allowlists, screeps-specific
-review heuristics) without affecting other installs.
+subagent discovery picks them up. Spawn scripts inject a `.claude/agents`
+symlink into every worktree so workers can discover their own role and
+spawn sub-agents. User-scope agent symlinks in `~/.claude/agents/` are
+**not** used — per-install project-scope discovery is the model. Forks
+of a circus install can diverge agent definitions per-fork (e.g. tighter
+tool allowlists, repo-specific review heuristics) without affecting
+other installs.
 
 | Role | Model default | What it does |
 |------|---------------|--------------|
+| handler | opus | Orchestrates missions; no file edits |
 | legman | sonnet | Writes code on one mission, opens a PR, idles |
 | watcher | sonnet | Reviews a legman's PR, posts review on the PR, returns verdict |
 | ferret | haiku | Reads N repos read-only, writes a findings note, exits |
@@ -389,7 +391,8 @@ bits (missions, worktrees, repos, wikis, inbox) out of the tracked tree.
   inbox.json         # derived snapshot of active missions
   inbox.jsonl        # append-only log of state changes (PR-ready, verdicts)
 
-  agents/legman.md   # role definitions; .claude/agents/ symlinks here (project-scope)
+  agents/handler.md  # role definitions; .claude/agents/ symlinks here (project-scope)
+  agents/legman.md
   agents/watcher.md
   agents/ferret.md
 ```
@@ -407,10 +410,29 @@ a long time, flag it. Don't track dollars yourself — the user has `/cost`.
 Every closed mission's `~/code/circus/missions/done/<id>/` is permanent.
 Don't delete archives.
 
+## Fixer mode: naked claude
+
+When the system is wedged — a spawn script broken, an agent definition with
+a bug, a permissions config that prevents dispatching — the recovery path is:
+
+```
+claude --bare      (from ~/code/circus/)
+```
+
+This runs without any agent role; you get full tools. Use it to fix the
+underlying issue, commit, then return to `claude --agent=handler` (or
+`bin/circus`) for normal handler work. This is intentionally the *only*
+escape hatch — there is no privileged "fixer" agent or bot, because
+backdoors erode the discipline. The user is the fixer.
+
+The `--bare` flag also skips CLAUDE.md auto-discovery, hooks, and LSP
+startup — so it's faster for quick in-and-out repairs.
+
 ## Tools at your disposal
 
 ### Circus scripts (bin/)
 
+- `bin/circus`                                              — start a handler session (`claude --agent=handler`); alias this or add to PATH
 - `bin/add-repo.sh <url> [--category X] [--issues-mode Y]` — register a new repo, clone it into `repos/<name>/`, auto-clone its wiki if enabled
 - `bin/spawn-legman.sh <repo> <brief-path> [--model X]`   — dispatch a legman as `claude --bg --agent legman`
 - `bin/spawn-watcher.sh <mission-id> [--model X]`          — dispatch a watcher on an awaiting-review mission
@@ -472,9 +494,8 @@ the first page.
 
 The wiki is the **repo-specific knowledge base** — patterns, gotchas,
 historical context. The `circus` wiki is the cross-repo hub.
-Ferrets append findings to the relevant wiki; the handler edits the
-wiki directly (it's circus-tooling-adjacent, not repo code). Workers
-read the wiki when their brief points at a page.
+Ferrets append findings to the relevant wiki. Workers read the wiki
+when their brief points at a page.
 
 `bin/wiki-sync.sh` pulls+pushes every wiki marked `wiki: true` in
 repos.yml. Run it occasionally; it's not automatic.
@@ -485,8 +506,8 @@ Each owned repo has a **status page** that captures "where are we right
 now" — current state, in-flight missions, known issues, recent
 changes, roadmap. The handler owns these pages.
 
-- **Source of truth**: `meta/repo-status/<name>.md` (lives in circus,
-  so the handler edits directly — Rule 1 holds).
+- **Source of truth**: `meta/repo-status/<name>.md` (lives in circus;
+  updates go through a legman mission like any other circus change).
 - **Optional wiki sync**: if `status_wiki: on` in repos.yml,
   `bin/status-sync.sh` pushes the local page to the repo's GitHub
   wiki at `Status.md`. Push-only. Separate from `wiki:`-driven
@@ -550,8 +571,12 @@ These are deliberately listed so they don't get forgotten:
   human" escalation when the user is away from the terminal.
 - **Docker isolation** for workers (so `--dangerously-skip-permissions`
   is bounded). Open question whether worth the setup cost.
-- **Install / init flow** — clone circus, ensure `.claude/agents`
-  symlinks to `agents/` (done at clone time), verify
-  `gh`/`jq`/`yq`/`claude` are installed and current (≥2.1.144 for
-  `claude --bg`), run
-  `bin/add-repo.sh` for your first repo.
+- **`bin/circus-init.sh`** — a real first-time setup script: interview
+  the install (identity, repo list), write `repos.yml` self-entry,
+  set up wiki bootstraps, verify `gh`/`jq`/`yq`/`claude` versions.
+  The agent role infrastructure is in place; this script is the
+  remaining gap for a clean new-install story.
+- **SessionStart hook for fixer-mode warning** — a nice-to-have: when
+  a session starts without `--agent=handler`, print a reminder that
+  the user is in fixer mode, not handler mode. Skip until hooks
+  support conditional logic cleanly.

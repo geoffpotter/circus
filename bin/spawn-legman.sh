@@ -88,6 +88,14 @@ BRANCH="circus/$MISSION_ID"
 log "creating worktree $WORKTREE on branch $BRANCH (from $DEFAULT_BRANCH)"
 git -C "$REPO_PATH" worktree add -b "$BRANCH" "$WORKTREE" "$DEFAULT_BRANCH"
 
+# Inject agent definitions so role discovery works from inside the worktree.
+# Only needed when the worktree doesn't already have its own .claude/agents
+# (e.g. non-circus repos). Absolute symlink so it resolves regardless of cwd.
+if [[ ! -e "$WORKTREE/.claude/agents" ]]; then
+  mkdir -p "$WORKTREE/.claude"
+  ln -sf "$CIRCUS_ROOT/.claude/agents" "$WORKTREE/.claude/agents"
+fi
+
 # Identity for this repo
 ( cd "$WORKTREE" && apply_identity "$REPO" )
 
