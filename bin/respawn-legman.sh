@@ -58,6 +58,19 @@ M_DIR=$(mission_dir "$MISSION_ID")
 [[ -n "$PR_URL" ]] || die "mission $MISSION_ID has no PR"
 [[ -d "$WORKTREE" ]] || die "worktree missing: $WORKTREE"
 
+# Drift warning: the respawned legman will commit on top of the existing branch,
+# not re-branch from default_branch, but flag drift so the handler knows.
+REPO_PATH=$(repo_path "$REPO")
+DEFAULT_BRANCH=$(repo_field "$REPO" '.default_branch')
+[[ -n "$DEFAULT_BRANCH" ]] || DEFAULT_BRANCH="main"
+git -C "$REPO_PATH" fetch origin --quiet 2>/dev/null || true
+DRIFT=$(git -C "$REPO_PATH" rev-list --left-right --count "${DEFAULT_BRANCH}...origin/${DEFAULT_BRANCH}" 2>/dev/null || echo "0	0")
+DRIFT_AHEAD=$(printf '%s' "$DRIFT" | awk '{print $1}')
+DRIFT_BEHIND=$(printf '%s' "$DRIFT" | awk '{print $2}')
+if [[ "$DRIFT_BEHIND" -gt 0 || "$DRIFT_AHEAD" -gt 5 ]]; then
+  log "WARNING: local $REPO/$DEFAULT_BRANCH is $DRIFT_AHEAD ahead, $DRIFT_BEHIND behind origin/$DEFAULT_BRANCH — consider reconciling before the legman pushes again"
+fi
+
 # Stop and remove the prior session (state stays on disk per claude rm
 # semantics, but we're about to start a fresh one with the same name).
 if [[ -n "$PRIOR_SESSION_ID" ]]; then

@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ShellCheck: informational — prints warnings without failing the build.
+      # The existing scripts have shellcheck findings that are out of scope for
+      # this PR. See the PR body for details; fix in follow-up missions.
+      - name: ShellCheck (informational)
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck -x -e SC1091 bin/*.sh || true
+
+      - name: Validate repos.yml structure
+        run: |
+          # yq (mikefarah/yq v4) is preinstalled on ubuntu-latest
+          count=$(yq '.repos | length' repos.yml)
+          [ "$count" -gt 0 ] || { echo "ERROR: repos.yml has no repos"; exit 1; }
+          echo "repos.yml: $count repos"
+
+          fail=0
+
+          # Every repo must have a name and a recognised category.
+          while IFS='|' read -r name cat; do
+            case "$cat" in
+              owned|contributor|reference) ;;
+              *) echo "ERROR: repo '$name' has invalid category: '$cat'"; fail=1 ;;
+            esac
+          done < <(yq '.repos[] | .name + "|" + .category' repos.yml)
+
+          # Contributor repos must declare upstream_remote_url.
+          while IFS= read -r name; do
+            upstream=$(yq ".repos[] | select(.name == \"$name\") | .upstream_remote_url // \"\"" repos.yml)
+            [ -n "$upstream" ] && [ "$upstream" != "null" ] || \
+              { echo "ERROR: contributor repo '$name' missing upstream_remote_url"; fail=1; }
+          done < <(yq '.repos[] | select(.category == "contributor") | .name' repos.yml)
+
+          # Owned repos must declare nwo.
+          while IFS= read -r name; do
+            nwo=$(yq ".repos[] | select(.name == \"$name\") | .nwo // \"\"" repos.yml)
+            [ -n "$nwo" ] && [ "$nwo" != "null" ] || \
+              { echo "ERROR: owned repo '$name' missing nwo"; fail=1; }
+          done < <(yq '.repos[] | select(.category == "owned") | .name' repos.yml)
+
+          [ "$fail" -eq 0 ] || exit 1
+          echo "repos.yml: structure ok"
+
+      - name: Validate agent frontmatter
+        run: |
+          fail=0
+          for f in agents/*.md; do
+            if ! head -1 "$f" | grep -q '^---$'; then
+              echo "ERROR: $f: missing opening frontmatter ---"
+              fail=1
+              continue
+            fi
+            fm=$(awk 'NR==1 && /^---$/{in_fm=1; next} in_fm && /^---$/{exit} in_fm{print}' "$f")
+            if [ -z "$fm" ]; then
+              echo "ERROR: $f: empty or unclosed frontmatter"
+              fail=1
+              continue
+            fi
+            name_val=$(echo "$fm" | yq '.name // ""')
+            desc_val=$(echo "$fm" | yq '.description // ""')
+            if [ -z "$name_val" ] || [ "$name_val" = "null" ]; then
+              echo "ERROR: $f: missing required key 'name'"
+              fail=1
+            fi
+            if [ -z "$desc_val" ] || [ "$desc_val" = "null" ]; then
+              echo "ERROR: $f: missing required key 'description'"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "agents: frontmatter ok"
+
+      - name: Smoke test - state machine init
+        run: bash tests/smoke-state-init.sh
+
+      - name: Collision test - unique mission ids under rapid dispatch
+        run: bash tests/test-collision.sh

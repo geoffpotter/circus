@@ -33,6 +33,18 @@ PR_NUMBER=$(jq -r '.pr_number // empty' "$STATUS_FILE")
 [[ -n "$PR_URL" ]] || die "mission has no PR yet: $MISSION_ID"
 
 REPO_PATH=$(repo_path "$REPO")
+DEFAULT_BRANCH=$(repo_field "$REPO" '.default_branch')
+[[ -n "$DEFAULT_BRANCH" ]] || DEFAULT_BRANCH="main"
+
+# Drift warning: PR base may have advanced; a future respawned legman will
+# branch from default_branch, so flag drift now rather than after review.
+git -C "$REPO_PATH" fetch origin --quiet 2>/dev/null || true
+DRIFT=$(git -C "$REPO_PATH" rev-list --left-right --count "${DEFAULT_BRANCH}...origin/${DEFAULT_BRANCH}" 2>/dev/null || echo "0	0")
+DRIFT_AHEAD=$(printf '%s' "$DRIFT" | awk '{print $1}')
+DRIFT_BEHIND=$(printf '%s' "$DRIFT" | awk '{print $2}')
+if [[ "$DRIFT_BEHIND" -gt 0 || "$DRIFT_AHEAD" -gt 5 ]]; then
+  log "WARNING: local $REPO/$DEFAULT_BRANCH is $DRIFT_AHEAD ahead, $DRIFT_BEHIND behind origin/$DEFAULT_BRANCH — a future legman spawn from this state may produce spurious diffs"
+fi
 
 # Detached-HEAD worktree at branch tip — separate from legman's worktree.
 WATCHER_WORKTREE="$CIRCUS_WORKTREES_DIR/${MISSION_ID}-watcher"
@@ -85,7 +97,7 @@ SESSION_OUTPUT=$(
     --dangerously-skip-permissions \
     "$PROMPT" 2>&1
 )
-SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)
+SESSION_ID=$(printf '%s' "$SESSION_OUTPUT" | sed -E $'s/\x1b\\[[0-9;]*m//g' | grep -oE 'backgrounded · [a-f0-9]+' | awk '{print $3}' | head -1)
 if [[ -z "$SESSION_ID" ]]; then
   log "WARNING: could not parse session id from claude --bg output:"
   printf '%s\n' "$SESSION_OUTPUT" | sed 's/^/  /' >&2
