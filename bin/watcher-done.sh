@@ -155,8 +155,13 @@ if [[ "$AUTO_RESPAWN" == "true" ]]; then
 fi
 
 # Auto-close owned missions after all output is done (approve verdict, owned repo).
+# Detached so the invocation survives the watcher's own session being stopped by
+# close-mission.sh. setsid is absent on Darwin; nohup + disown is sufficient
+# because nohup ignores SIGHUP and disown drops the job from the shell's job table.
 if [[ "$CLOSE_OWNED" == "true" ]]; then
-  log "auto-closing mission $MISSION_ID"
-  "$HERE/close-mission.sh" "$MISSION_ID" \
-    || log "WARNING: close-mission.sh failed — close manually: bin/close-mission.sh $MISSION_ID"
+  AUTO_CLOSE_LOG="$(mission_dir "$MISSION_ID")/auto-close.log"
+  log "auto-closing mission $MISSION_ID (detached; log: $AUTO_CLOSE_LOG)"
+  nohup "$HERE/close-mission.sh" "$MISSION_ID" \
+    >"$AUTO_CLOSE_LOG" 2>&1 </dev/null &
+  disown
 fi
